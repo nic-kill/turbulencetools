@@ -13,10 +13,18 @@ from astropy.io import fits
 import gausspy.gausspy.gp as gp
 from gausspyplus.utils.gaussian_functions import gaussian, combined_gaussian
 
-def make_vel_ax(head,kms=True):
-    x=np.divide([head['CRVAL3']+k*head['CDELT3'] for k in range(head['NAXIS3'])],1000)
+def make_vel_ax(vel0=None,delvel=None,vellen=None,header=None,kms=True):
+    '''vel0, delvel and vellen values given in km/s'''
+    if header != None:
+        #x is in kms
+        x=np.divide([header['CRVAL3']+k*header['CDELT3'] for k in range(header['NAXIS3'])],1000)
+    else:
+        #x is in kms
+        x=[vel0+k*delvel for k in np.arange(vellen)]
+
     if kms == False:
         x=x*1000
+    
     return x
 
 def gaussian(length,amplitude,width,position):
@@ -43,18 +51,24 @@ def sumgaussians_lmfit(args, x, data=None):
         return y
     return y - data
 
-def simulate_comp(length, fwhm, pos, tb_0=None,tau_0=None,ts_0=None,vmin=-30,vmax=30):
+def simulate_comp(length, fwhm, pos, header=None, tau_0=None,ts_0=None,vmin=-30,vmax=30):
     '''simulates a gaussian component when given two of the three above values.'''
     
     #centres the spectrum around 0km/s
-    length=np.linspace(vmin,vmax,length)
     
-    if tau_0 != None and ts_0 != None:
-        #Ts=gaussian(length,ts_0,fwhm,pos)
-        Ts=ts_0
-        tau=gaussian(length,tau_0,fwhm,pos)
-        Tb=np.multiply(Ts,(1-np.exp(-tau)))
-        return Tb, length
+    if header != None:
+        length = make_vel_ax
+    else:
+        length=np.linspace(vmin,vmax,length)
+
+
+    
+
+    Ts=ts_0
+    tau=gaussian(length,tau_0,fwhm,pos)
+    Tb=np.multiply(Ts,(1-np.exp(-tau)))
+
+    return Tb, length
 
 def simulate_spec(length,*comps,tb_noise=0, tau_noise=0,vmin=-30,vmax=30):
     '''First component has no opacity from other components and is physically first in the LOS. 
