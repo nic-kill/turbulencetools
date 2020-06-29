@@ -20,11 +20,6 @@ def make_vel_ax(head,kms=True):
     return x
 
 def gaussian(length,amplitude,width,position):
-    #print(type(length))
-    #if type(length) != list or type(length) != np.ndarray or type(length) != numpy.ndarray:
-    #    raise ValueError('length should be an array')
-    #else:
-    #return amplitude*np.exp(-0.5*((length-position)/(width/(2*np.sqrt(2*np.log(2)))))**2)
     return amplitude*np.exp(-0.5*((length-position)**2/(width/(2*np.sqrt(2*np.log(2))))**2))
 
 def sumgaussians(length, *args): 
@@ -53,19 +48,6 @@ def simulate_comp(length, fwhm, pos, tb_0=None,tau_0=None,ts_0=None,vmin=-30,vma
     
     #centres the spectrum around 0km/s
     length=np.linspace(vmin,vmax,length)
-    
-    
-    #if tb_0 != None and tau_0 != None:
-    #    Tb=gaussian(length,tb_0,fwhm,pos)
-    #    tau=gaussian(length,tau_0,fwhm,pos)
-    #    Ts=np.divide(Tb,(1-np.exp(-tau)))
-    #    return Ts, length
-    
-    #if tb_0 != None and ts_0 != None:
-    #    Ts=gaussian(length,ts_0,fwhm,pos)
-    #    Tb=gaussian(length,tb_0,fwhm,pos)
-    #    tau=-np.log(1-(np.divide(Tb,Ts)))
-    #    return tau, length
     
     if tau_0 != None and ts_0 != None:
         #Ts=gaussian(length,ts_0,fwhm,pos)
