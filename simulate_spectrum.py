@@ -13,6 +13,12 @@ from astropy.io import fits
 import gausspy.gausspy.gp as gp
 from gausspyplus.utils.gaussian_functions import gaussian, combined_gaussian
 
+def make_vel_ax(head,kms=True):
+    x=np.divide([head['CRVAL3']+k*head['CDELT3'] for k in range(head['NAXIS3'])],1000)
+    if kms == False:
+        x=x*1000
+    return x
+
 def gaussian(length,amplitude,width,position):
     #print(type(length))
     #if type(length) != list or type(length) != np.ndarray or type(length) != numpy.ndarray:
