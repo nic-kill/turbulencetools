@@ -33,10 +33,11 @@ def gaussian(length,amplitude,width,position):
     return amplitude*np.exp(-0.5*((length-position)**2/(width/(2*np.sqrt(2*np.log(2))))**2))
 
 def sumgaussians(length, *args): 
-    '''comps should be in format amp,width,pos'''
+    '''comps should be in format ((amp0,width0,pos0),(amp1,width1,pos1)....)'''
     y=0
-    for i in range(int(len(args)/3)): ###previously did range (1,int(len(...))) not sure if that was just an error left over from a previous indexing attempt
-        y+=gaussian(length,args[0+(3*i)],args[1+(3*i)],args[2+(3*i)])
+    for i in range(len(args)): ###previously did range (1,int(len(...))) not sure if that was just an error left over from a previous indexing attempt
+        print(i)
+        y+=gaussian(length,args[i][0],args[i][1],args[i][2])
     return y
 
 def gaussian_lmfit(amplitude,width,position,length):
