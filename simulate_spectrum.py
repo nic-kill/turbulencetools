@@ -13,6 +13,16 @@ from astropy.io import fits
 import gausspy.gausspy.gp as gp
 from gausspyplus.utils.gaussian_functions import gaussian, combined_gaussian
 
+from astropy.io import fits
+
+import astropy.units as u
+from spectral_cube import SpectralCube
+
+from radio_beam import Beam
+import numpy as np
+import schwimmbad
+import datetime
+
 def make_vel_ax(vel0=None,delvel=None,vellen=None,header=None,kms=True):
     '''vel0, delvel and vellen values given in km/s. Because its supplied in km/s 
     float values will result in rounding errors in the output. 
@@ -33,15 +43,18 @@ def gaussian(length,amplitude,width,position):
     return amplitude*np.exp(-0.5*((length-position)**2/(width/(2*np.sqrt(2*np.log(2))))**2))
 
 def sumgaussians(length, *args): 
-    '''comps should be in format ((amp0,width0,pos0),(amp1,width1,pos1)....)'''
+    '''comps should be in format sumgaussiasn(length,(amp0,width0,pos0),(amp1,width1,pos1)....)
+    
+    OR
+    
+    sumgaussiasn(length,*((amp0,width0,pos0),(amp1,width1,pos1)....))'''
     y=0
     for i in range(len(args)): ###previously did range (1,int(len(...))) not sure if that was just an error left over from a previous indexing attempt
-        print(i)
         y+=gaussian(length,args[i][0],args[i][1],args[i][2])
     return y
 
 def gaussian_lmfit(amplitude,width,position,length):
-    model=amplitude*np.exp(-0.5*((length-position)/(width/(2*np.sqrt(2*np.log(2)))))**2)
+    model=amplitude*np.exp(-0.5*((length-position)**2/(width/(2*np.sqrt(2*np.log(2))))**2))
     #if data is None:
     #    return model
     return model
@@ -53,7 +66,8 @@ def sumgaussians_lmfit(args, x, data=None):
         y+=gaussian_lmfit(args[f'amp{i}'],args[f'width{i}'],args[f'pos{i}'], x)
     if data is None:
         return y
-    return y - data
+    else:
+        return y - data
 
 def simulate_comp(length, fwhm, pos, header=None, tau_0=None,ts_0=None,vel0=-30,delvel=0.1,vellen=600,vel_ax=None):
     '''simulates a gaussian component when given two of the three above values. vellen and length are redundant and don't interact properly'''
@@ -184,3 +198,71 @@ def simulate_spec_lmfit(*comps,length,tb_noise=0, tau_noise=0,vmin=-30,vmax=30, 
         return spectrum, spectrum_no_opac, comp1len, sumtaus, inputcomps
     return spectrum-data
 
+
+
+
+
+########################
+def process_ordering(input):
+	#split inputs into the components
+	vcacube, chansamps, array_save_loc, fig_save_loc = input
+	print('starting'+str(vcacube))	
+
+	#load in the vcacube
+	vcacube=SpectralCube.read(vcacube)
+
+	else:
+		#do full thickness mom0 SPS and add to array first
+		#import data and compute moment 0
+		moment0=vcacube.moment(order=0)
+
+		#compute SPS, add in distance at some point as parameter
+		pspec = PowerSpectrum(moment0)
+		pspec.run(verbose=False, xunit=u.pix**-1)
+		vca_array=[pspec.slope,len(vcacube[:,0,0]),pspec.slope_err]
+
+		#iterate VCA over fractions of the total width of the PPV vcacube
+		#for i in [128,64,32,16,8,4,2,1]:
+		for i in chansamps:
+			vcacube.allow_huge_operations=True
+			downsamp_vcacube = vcacube.downsample_axis(i, axis=0)
+			downsamp_vcacube.allow_huge_operations=True
+			vca = VCA(downsamp_vcacube)
+			vca.run(verbose=True, save_name=f'{fig_save_loc}_thickness{i}.png')
+			vca_array=np.vstack((vca_array,[vca.slope,i,vca.slope_err]))
+
+		#save the array for future plotting without recomputing
+		np.save(array_save_loc, vca_array)
+		return vca_array
+	print('finished'+str(vcacube))
+#####################
+
+def multiproc_permutations(subcube_locs,channels,output_loc,fig_loc,dimensions):
+	""" subcube_locs must be a list containing the string preceding the dimensions and subcube details. 
+	e.g. everything before '..._7x7_x1_y2.fits' can be a list of multiple prefixes if needed.
+
+	arrayloc=/priv/myrtle1/gaskap/nickill/smc/vca/turbustatoutput/simcube_him_7x7_avatar 
+
+	channels should be input as a list and be factors of the total channel range in decreasing order e.g. [32,16,8,4,2,1] """
+	
+	with schwimmbad.MultiPool() as pool:
+		print('started multi processing')
+		print(datetime.datetime.now())
+
+		#create the lists for multiprocessing
+		#vcacube=[f'{subcube_locs}_{dimensions}x{dimensions}_x{i}_y{j}.fits' for j in np.arange(0,dimensions) for i in np.arange(0,dimensions)]
+		vcacube=[f'{k}_{dimensions}x{dimensions}_x{i}_y{j}.fits' for k in subcube_locs for j in np.arange(0,dimensions) for i in np.arange(0,dimensions)]
+		chansamps=[channels for j in np.arange(0,dimensions) for k in subcube_locs for i in np.arange(0,dimensions)]
+		#arrayloc=[f'{output_loc}_{dimensions}x{dimensions}_x{i}_y{j}' for j in np.arange(0,dimensions) for i in np.arange(0,dimensions)]
+		arrayloc=[f'{k}_{dimensions}x{dimensions}_x{i}_y{j}' for k in output_loc for j in np.arange(0,dimensions) for i in np.arange(0,dimensions)]
+		#figloc=[f'{fig_loc}_{dimensions}x{dimensions}_x{i}_y{j}' for j in np.arange(0,dimensions) for i in np.arange(0,dimensions)]
+		figloc=[f'{k}_{dimensions}x{dimensions}_x{i}_y{j}' for k in fig_loc for j in np.arange(0,dimensions) for i in np.arange(0,dimensions)]
+
+
+		inputs=list(zip(vcacube,chansamps,arrayloc,figloc))
+		print(f'THESE ARE THE INPUTS FOR MULTIPROCESSING:{inputs}')
+
+		out = list(pool.map(do_vca, inputs))
+		print('finished multiprocessing')
+		print(datetime.datetime.now())
+	print(out)
