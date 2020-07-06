@@ -40,10 +40,11 @@ def make_vel_ax(vel0=None,delvel=None,vellen=None,header=None,kms=True):
     return x
 
 def gaussian(length,amplitude,width,position):
+    '''length is a float or arraylike'''
     return amplitude*np.exp(-0.5*((length-position)**2/(width/(2*np.sqrt(2*np.log(2))))**2))
 
 def sumgaussians(length, *args): 
-    '''comps should be in format sumgaussiasn(length,(amp0,width0,pos0),(amp1,width1,pos1)....)
+    '''comps should be entered in format sumgaussiasn(length,(amp0,width0,pos0),(amp1,width1,pos1)....)
     
     OR
     
@@ -53,31 +54,18 @@ def sumgaussians(length, *args):
         y+=gaussian(length,args[i][0],args[i][1],args[i][2])
     return y
 
-def gaussian_lmfit(amplitude,width,position,length):
-    model=amplitude*np.exp(-0.5*((length-position)**2/(width/(2*np.sqrt(2*np.log(2))))**2))
-    #if data is None:
-    #    return model
-    return model
-
-def sumgaussians_lmfit(args, x, data=None): 
-    y=0
-    #print(args)
-    for i in range(int(len(args)/3)): ###previously did range (1,int(len(...))) not sure if that was just an error left over from a previous indexing attempt
-        y+=gaussian_lmfit(args[f'amp{i}'],args[f'width{i}'],args[f'pos{i}'], x)
-    if data is None:
-        return y
-    else:
-        return y - data
-
-def simulate_comp(length, fwhm, pos, header=None, tau_0=None,ts_0=None,vel0=-30,delvel=0.1,vellen=600,vel_ax=None):
-    '''simulates a gaussian component when given two of the three above values. vellen and length are redundant and don't interact properly'''
+def simulate_comp(length, fwhm, pos, header=None, ts_0=None, tau_0=None,vel0=-30,delvel=0.1,vellen=600,vel_ax=None):
+    '''simulates a gaussian component. 
+    vellen and length are redundant and don't interact properly'''
     
     #creates velocity axis from header
     if header is not None:
         length = make_vel_ax(header=header)
+    #otherwise pull a supplied velocity axis
     if vel_ax is not None:
         length=vel_ax
-    else: #creates custom velocity axis, currently uses length instead of vellen
+    #otherwise create custom velocity axis, currently uses length instead of vellen
+    else: 
         length=make_vel_ax(vel0=vel0,delvel=delvel,vellen=length)
 
     Ts=ts_0
@@ -138,7 +126,7 @@ def simulate_spec(length,*comps,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.5,vell
     
     return spectrum, spectrum_no_opac, comp1len, sumtaus, inputcomps
 
-def simulate_spec_lmfit(*comps,length,tb_noise=0, tau_noise=0,vmin=-30,vmax=30, data=None):
+def simulate_spec_lmfit(*comps,length,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.5,vellen=600,vel_ax=None, data=None):
     '''First component has no opacity from other components and is physically first in the LOS. 
     Second component inputted will have the first blocking it and so on.
     Component should have format (fwhm,pos,Ts,Tau)
@@ -149,18 +137,16 @@ def simulate_spec_lmfit(*comps,length,tb_noise=0, tau_noise=0,vmin=-30,vmax=30, 
     
     comps=comps[0]
     #establish the velocity space
-    gausslen=np.linspace(vmin,vmax,length)
-    
-    #print(f'THESE ARE ALL COMPS:{comps}')
-    #print(f'THESE ARE COMPS[0]:{comps[0]}')
-    #print(f'THESE ARE ALL COMPS:{inputcomps}')
-    #print(f'THESE ARE WIDTH0:{comps["width0"]}')
+    if vel_ax is not None:
+        gausslen = vel_ax
+    else:
+        gausslen=make_vel_ax(vel0=vel0,delvel=delvel,vellen=length)
     #define the first component
     comp1, comp1len = simulate_comp(length,
     comps[f'width0'],
     comps[f'pos0'],
     ts_0=comps[f'Ts0'],
-    tau_0=comps[f'tau0'])
+    tau_0=comps[f'tau0'],vel_ax=vel_ax)
     
 
     #establish the spectra
@@ -176,7 +162,7 @@ def simulate_spec_lmfit(*comps,length,tb_noise=0, tau_noise=0,vmin=-30,vmax=30, 
         comps[f'width{i}'],
         comps[f'pos{i}'],
         ts_0=comps[f'Ts{i}'],
-        tau_0=comps[f'tau{i}'])
+        tau_0=comps[f'tau{i}'],vel_ax=vel_ax)
 
         #add to the opacity spectrum the i-1th component
         sumtaus+=gaussian(gausslen,comps[f'tau{i-1}'],comps[f'width{i-1}'],comps[f'pos{i-1}'])
@@ -204,37 +190,36 @@ def simulate_spec_lmfit(*comps,length,tb_noise=0, tau_noise=0,vmin=-30,vmax=30, 
 
 ########################
 def process_ordering(input):
-	#split inputs into the components
-	vcacube, chansamps, array_save_loc, fig_save_loc = input
-	print('starting'+str(vcacube))	
+    #split inputs into the components
+    vcacube, chansamps, array_save_loc, fig_save_loc = input
+    print('starting'+str(vcacube))	
 
-	#load in the vcacube
-	vcacube=SpectralCube.read(vcacube)
+    #do full thickness mom0 SPS and add to array first
+    #import data and compute moment 0
+    moment0=vcacube.moment(order=0)
 
-	else:
-		#do full thickness mom0 SPS and add to array first
-		#import data and compute moment 0
-		moment0=vcacube.moment(order=0)
+    #compute SPS, add in distance at some point as parameter
+    pspec = PowerSpectrum(moment0)
+    pspec.run(verbose=False, xunit=u.pix**-1)
+    vca_array=[pspec.slope,len(vcacube[:,0,0]),pspec.slope_err]
 
-		#compute SPS, add in distance at some point as parameter
-		pspec = PowerSpectrum(moment0)
-		pspec.run(verbose=False, xunit=u.pix**-1)
-		vca_array=[pspec.slope,len(vcacube[:,0,0]),pspec.slope_err]
+    #iterate VCA over fractions of the total width of the PPV vcacube
+    #for i in [128,64,32,16,8,4,2,1]:
+    for i in chansamps:
+        vcacube.allow_huge_operations=True
+        downsamp_vcacube = vcacube.downsample_axis(i, axis=0)
+        downsamp_vcacube.allow_huge_operations=True
+        vca = VCA(downsamp_vcacube)
+        vca.run(verbose=True, save_name=f'{fig_save_loc}_thickness{i}.png')
+        vca_array=np.vstack((vca_array,[vca.slope,i,vca.slope_err]))
 
-		#iterate VCA over fractions of the total width of the PPV vcacube
-		#for i in [128,64,32,16,8,4,2,1]:
-		for i in chansamps:
-			vcacube.allow_huge_operations=True
-			downsamp_vcacube = vcacube.downsample_axis(i, axis=0)
-			downsamp_vcacube.allow_huge_operations=True
-			vca = VCA(downsamp_vcacube)
-			vca.run(verbose=True, save_name=f'{fig_save_loc}_thickness{i}.png')
-			vca_array=np.vstack((vca_array,[vca.slope,i,vca.slope_err]))
+    #save the array for future plotting without recomputing
+    np.save(array_save_loc, vca_array)
 
-		#save the array for future plotting without recomputing
-		np.save(array_save_loc, vca_array)
-		return vca_array
-	print('finished'+str(vcacube))
+    print('finished'+str(vcacube))
+    return vca_array
+
+
 #####################
 
 def multiproc_permutations(subcube_locs,channels,output_loc,fig_loc,dimensions):
@@ -266,3 +251,20 @@ def multiproc_permutations(subcube_locs,channels,output_loc,fig_loc,dimensions):
 		print('finished multiprocessing')
 		print(datetime.datetime.now())
 	print(out)
+
+
+def gaussian_lmfit(amplitude,width,position,length):
+    model=amplitude*np.exp(-0.5*((length-position)**2/(width/(2*np.sqrt(2*np.log(2))))**2))
+    #if data is None:
+    #    return model
+    return model
+
+def sumgaussians_lmfit(args, x, data=None): 
+    y=0
+    #print(args)
+    for i in range(int(len(args)/3)): ###previously did range (1,int(len(...))) not sure if that was just an error left over from a previous indexing attempt
+        y+=gaussian_lmfit(args[f'amp{i}'],args[f'width{i}'],args[f'pos{i}'], x)
+    if data is None:
+        return y
+    else:
+        return y - data
