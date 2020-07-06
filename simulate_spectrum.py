@@ -37,10 +37,10 @@ def make_vel_ax(vel0=None,delvel=None,vellen=None,header=None,kms=True):
     if kms == False:
         x=x*1000
     
-    return x
+    return np.array(x)
 
 def gaussian(length,amplitude,width,position):
-    '''length is a float or arraylike'''
+    '''length is a float or numpy array, lists will throw operand errors'''
     return amplitude*np.exp(-0.5*((length-position)**2/(width/(2*np.sqrt(2*np.log(2))))**2))
 
 def sumgaussians(length, *args): 
@@ -54,7 +54,7 @@ def sumgaussians(length, *args):
         y+=gaussian(length,args[i][0],args[i][1],args[i][2])
     return y
 
-def simulate_comp(length, fwhm, pos, header=None, ts_0=None, tau_0=None,vel0=-30,delvel=0.1,vellen=600,vel_ax=None):
+def simulate_comp(fwhm, pos, header=None, ts_0=None, tau_0=None,vel0=-30,delvel=0.1,vellen=600,vel_ax=None):
     '''simulates a gaussian component. 
     vellen and length are redundant and don't interact properly'''
     
@@ -66,7 +66,7 @@ def simulate_comp(length, fwhm, pos, header=None, ts_0=None, tau_0=None,vel0=-30
         length=vel_ax
     #otherwise create custom velocity axis, currently uses length instead of vellen
     else: 
-        length=make_vel_ax(vel0=vel0,delvel=delvel,vellen=length)
+        length=make_vel_ax(vel0=vel0,delvel=delvel,vellen=vellen)
 
     Ts=ts_0
     tau=gaussian(length,tau_0,fwhm,pos)
@@ -74,7 +74,7 @@ def simulate_comp(length, fwhm, pos, header=None, ts_0=None, tau_0=None,vel0=-30
 
     return Tb, length
 
-def simulate_spec(length,*comps,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.5,vellen=600,vel_ax=None):
+def simulate_spec(*comps,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.1,vellen=600,vel_ax=None):
     '''First component has no opacity from other components and is physically first in the LOS. 
     Second component inputted will have the first blocking it and so on.
     Component should have format (fwhm,pos,Ts,Tau)
@@ -85,15 +85,13 @@ def simulate_spec(length,*comps,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.5,vell
     #record the input components
     inputcomps=[i for i in comps]
     
-    #establish the velocity space, currently uses length instead of vellen
-    if vel_ax is not None:
-        gausslen = vel_ax
-    else:
-        gausslen=make_vel_ax(vel0=vel0,delvel=delvel,vellen=length)
+    #establish the velocity space if vel_ax is undefined
+    if vel_ax is None:
+        vel_ax=make_vel_ax(vel0=vel0,delvel=delvel,vellen=vellen)
     
     #define the first component
-    comp1, comp1len = simulate_comp(length,comps[0][0],comps[0][1],ts_0=comps[0][2],tau_0=comps[0][3],
-    vel0=vel0,delvel=delvel,vellen=length,vel_ax=vel_ax)
+    comp1, comp1len = simulate_comp(comps[0][0],comps[0][1],ts_0=comps[0][2],tau_0=comps[0][3],
+    vel0=vel0,delvel=delvel,vellen=vellen,vel_ax=vel_ax)
     
     
     #establish the spectra
@@ -105,19 +103,19 @@ def simulate_spec(length,*comps,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.5,vell
     
     for i in range(1,len(comps)):
         #take the ith component beginning with the second comp
-        newcomp, newcomplen = simulate_comp(length,comps[i][0],comps[i][1],ts_0=comps[i][2],tau_0=comps[i][3],
-        vel0=vel0,delvel=delvel,vellen=length,vel_ax=vel_ax)
+        newcomp, newcomplen = simulate_comp(comps[i][0],comps[i][1],ts_0=comps[i][2],tau_0=comps[i][3],
+        vel0=vel0,delvel=delvel,vellen=vellen,vel_ax=vel_ax)
        
         #add to the opacity spectrum the i-1th component
-        sumtaus+=gaussian(gausslen,comps[i-1][3],comps[i-1][0],comps[i-1][1])
+        sumtaus+=gaussian(vel_ax,comps[i-1][3],comps[i-1][0],comps[i-1][1])
         
         #new spectrum = the new component * np.exp(-opacity spectrum for the preceding components)
         spectrum+=newcomp*np.exp(-sumtaus)
         spectrum_no_opac+=newcomp
         
     #add in the last components opacity to make the opacity spectrum complete, also add in noise
-    sumtaus += gaussian(gausslen,comps[-1][3],comps[-1][0],comps[-1][1])
-    sumtaus += (np.random.normal(0,tau_noise,len(gausslen)))
+    sumtaus += gaussian(vel_ax,comps[-1][3],comps[-1][0],comps[-1][1])
+    sumtaus += (np.random.normal(0,tau_noise,len(vel_ax)))
     
     #add in tb_noise
     noise = np.random.normal(0,tb_noise,len(comp1len))
