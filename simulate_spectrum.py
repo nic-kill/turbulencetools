@@ -79,8 +79,6 @@ def simulate_spec(*comps,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.1,vellen=600,
     Second component inputted will have the first blocking it and so on.
     Component should have format (fwhm,pos,Ts,Tau)
     Noise is in std devs and hence in the units of the spectrum.
-
-    vellen and length are redundant and don't interact properly
     '''
     #record the input components
     inputcomps=[i for i in comps]
