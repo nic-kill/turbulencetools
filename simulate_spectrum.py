@@ -27,7 +27,7 @@ def make_vel_ax(vel0=None,delvel=None,vellen=None,header=None,kms=True):
     '''vel0, delvel and vellen values given in km/s. Because its supplied in km/s 
     float values will result in rounding errors in the output. 
     Could change it to be in m/s in the future to alleviate this issue if necessary'''
-    if header != None:
+    if header is not None:
         #x is in kms
         x=np.divide([header['CRVAL3']+k*header['CDELT3'] for k in range(header['NAXIS3'])],1000)
     else:
@@ -57,7 +57,6 @@ def sumgaussians(length, *args):
 def simulate_comp(fwhm, pos, header=None, ts_0=None, tau_0=None,vel0=-30,delvel=0.1,vellen=600,vel_ax=None):
     '''simulates a gaussian component. 
     vellen and length are redundant and don't interact properly'''
-    
     #creates velocity axis from header
     if header is not None:
         length = make_vel_ax(header=header)
@@ -138,11 +137,7 @@ def simulate_spec_lmfit(*comps,length,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.
     else:
         gausslen=make_vel_ax(vel0=vel0,delvel=delvel,vellen=length)
     #define the first component
-    comp1, comp1len = simulate_comp(length,
-    comps[f'width0'],
-    comps[f'pos0'],
-    ts_0=comps[f'Ts0'],
-    tau_0=comps[f'tau0'],vel_ax=vel_ax)
+    comp1, comp1len = simulate_comp(comps[f'width0'],comps[f'pos0'],ts_0=comps[f'Ts0'],tau_0=comps[f'tau0'],vel_ax=vel_ax)
     
 
     #establish the spectra
@@ -154,8 +149,7 @@ def simulate_spec_lmfit(*comps,length,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.
     
     for i in range(1,int(len(comps)/4)): #divide 4 because each of the components has 4 subcomponents
         #take the ith component beginning with the second comp
-        newcomp, newcomplen = simulate_comp(length,
-        comps[f'width{i}'],
+        newcomp, newcomplen = simulate_comp(comps[f'width{i}'],
         comps[f'pos{i}'],
         ts_0=comps[f'Ts{i}'],
         tau_0=comps[f'tau{i}'],vel_ax=vel_ax)
