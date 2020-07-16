@@ -174,7 +174,86 @@ def simulate_spec_lmfit(*comps,length,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.
         return spectrum, spectrum_no_opac, comp1len, sumtaus, inputcomps
     return spectrum-data
 
+def simulate_spec_kcomp_lmfit(*comps,
+length,
+tb_noise=0, 
+tau_noise=0,
+vel0=-30,
+delvel=0.5,
+vellen=600,
+vel_ax=None, 
+frac=0,
+data=None):
+    '''First component has no opacity from other components and is physically first in the LOS. 
+    Second component inputted will have the first blocking it and so on.
+    Component should have format (fwhm,pos,Ts,Tau)
+    Noise is in std devs and hence in the units of the spectrum
+    '''
+    #record the input components
+    inputcomps=[i for i in comps]
 
+    comps=comps[0]
+    
+    #establish the velocity space
+    if vel_ax is not None:
+        gausslen = vel_ax
+    else:
+        gausslen = make_vel_ax(vel0=vel0,delvel=delvel,vellen=length)
+    
+    #separate out the warm and cold comps to make them easier to iterate through
+    coldcomps = {key:val for (key,val) in comps.items() if 'cold' in key}
+    warmcomps = {key:val for (key,val) in comps.items() if 'warm' in key}
+    
+    #################################
+    ##first deal with the cold comps
+    #################################
+    
+    #define the first component
+    comp1, comp1len = simulate_comp(coldcomps[f'cold_width0'],coldcomps[f'cold_pos0'],ts_0=coldcomps[f'cold_Ts0'],tau_0=coldcomps[f'cold_tau0'],vel_ax=vel_ax)
+    
+    #establish the spectra
+    spectrum=comp1.copy()
+    spectrum_no_opac=comp1.copy()
+    
+    #set the opacity of the LOS to zero
+    sumtaus=0
+    
+    for i in range(1,int(len(coldcomps)/4)): #divide 4 because each of the components has 4 subcomponents
+        #take the ith component beginning with the second comp
+        newcomp, newcomplen = simulate_comp(coldcomps[f'cold_width{i}'],
+        coldcomps[f'cold_pos{i}'],
+        ts_0=coldcomps[f'cold_Ts{i}'],
+        tau_0=coldcomps[f'cold_tau{i}'],vel_ax=vel_ax)
+
+        #add to the opacity spectrum the i-1th component
+        sumtaus+=gaussian(gausslen,coldcomps[f'cold_tau{i-1}'],coldcomps[f'cold_width{i-1}'],coldcomps[f'cold_pos{i-1}'])
+        
+        #new spectrum = the new component * np.exp(-opacity spectrum for the preceding components)
+        spectrum+=newcomp*np.exp(-sumtaus)
+        spectrum_no_opac+=newcomp
+    
+    #add in the last component's opacity to make the opacity spectrum complete, also add in noise
+    sumtaus += gaussian(gausslen,coldcomps[f'cold_tau{int(len(coldcomps)/4)-1}'],coldcomps[f'cold_width{int(len(coldcomps)/4-1)}'],coldcomps[f'cold_pos{int(len(coldcomps)/4)-1}'])
+    sumtaus += (np.random.normal(0,tau_noise,len(gausslen)))
+    
+    #################################
+    ##now deal with the warm comps
+    #################################
+
+    #only proceed if warm components are specified
+    if len(warmcomps.keys()) > 0:
+        for i in range(0,int(len(warmcomps)/3)):
+            spectrum+=(frac+((1-frac)*np.exp(-sumtaus)))*gaussian(gausslen,warmcomps[f'warm_amp{i}'],warmcomps[f'warm_width{i}'],warmcomps[f'warm_pos{i}'])
+
+
+    #add in tb_noise
+    noise = np.random.normal(0,tb_noise,len(comp1len))
+    spectrum += noise
+    spectrum_no_opac += noise
+    
+    if data is None:
+        return spectrum, spectrum_no_opac, comp1len, sumtaus, inputcomps
+    return spectrum-data
 
 
 
@@ -241,6 +320,85 @@ def multiproc_permutations(subcube_locs,channels,output_loc,fig_loc,dimensions):
 		print('finished multiprocessing')
 		print(datetime.datetime.now())
 	print(out)
+
+t_0=time.clock()
+
+#write the orderings to the log so that its saved with the data and is retrievable
+orderinglog['indexarray']=indexarray
+orderinglog['comp_permutations']=comp_permutations
+
+
+fit_params = Parameters()
+for k in range(len(comp_permutations)):
+#for k in range(len(comp_permutations)): # loops over each permutation 
+    #needs to be sampled the same as the index array lower down if only taking a subset of 
+    #the whole set of possible permutations
+    for i in range(len(comp_permutations[k])): #loops over each component in a permutation
+        #set the lmfit paramaters:
+        fit_params.add(f'width{i}', value=comp_permutations[k][i][0], vary=True,
+                       min=comp_permutations[k][i][0]-0.1*np.abs(comp_permutations[k][i][0]),
+                       max=comp_permutations[k][i][0]+0.1*np.abs(comp_permutations[k][i][0]))
+        fit_params.add(f'pos{i}', value=comp_permutations[k][i][1], vary= True,
+                       min=comp_permutations[k][i][1]-0.1*np.abs(comp_permutations[k][i][1]),
+                       max=comp_permutations[k][i][1]+0.1*np.abs(comp_permutations[k][i][1]))
+        fit_params.add(f'Ts{i}', value=comp_permutations[k][i][2], vary=True,
+                       min=0.055, #rms noise on emission is 0.055K
+                       max=10000)
+        fit_params.add(f'tau{i}', value=comp_permutations[k][i][3], vary=False)
+    
+    ##plot the input spectrum, kcomps and the reconstructed gaussian components
+    #plt.plot(xspace,data)
+    #plt.plot(xspace,kcomps)
+    #for i in range(len(comp_permutations[k])):
+    #    plt.plot(xspace,trb.simulate_comp(fit_params[f'width{i}'].value,
+    #                                  fit_params[f'pos{i}'].value,
+    #                                  ts_0=fit_params[f'Ts{i}'].value,
+    #                                  tau_0=fit_params[f'tau{i}'].value,
+    #                                  vel_ax=xspace)[0])
+    #plt.figure()
+
+    ##plots look fine the problem is after this point
+    
+    '''feed in the above paramaters into the simulate_spec function, 
+    length is fed in as a kwarg ratherc than arg because lmfit (specifically the args=(x,)) 
+    means i need to make the length the last parameter but for a gathered parameter *comps
+    it is ambiguous as to which variable is the length'''
+    out = minimize(trb.simulate_spec_lmfit, fit_params, method='leastsq', args=(x,), kws={'data': data, 'vel_ax': xspace,'length': x})
+    #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
+    
+    fit = trb.simulate_spec_lmfit(out.params, length=x, vel_ax=xspace)[0] 
+    
+    
+    #display junk
+    #report_fit(out, show_correl=True)
+    out.params.pretty_print()   
+
+    #don't think r squared is actually applicable to non-linear data but whatevs
+    print(f' R-squared = {1-np.sum(np.square(data-fit))/len(data)}')
+
+    #plot the results
+    #plt.plot(xspace, data, c='grey', ls=':',label='data')
+    #plt.plot(xspace, fit, c='black', ls='dashed',label='fit',lw=1)
+    #plt.plot(xspace, data-fit, 'k.',label='residuals')
+    #for i in range(len(comp_permutations[k])):
+    #    plt.plot(xspace,trb.simulate_comp(out.params[f'width{i}'],
+    #                                 out.params[f'pos{i}'],
+    #                                 ts_0=out.params[f'Ts{i}'],
+    #                                 tau_0=out.params[f'tau{i}'],vel_ax=xspace)[0],
+    #             label=f'comp {i}')
+    #    print(f'Comp {i} Ts = {out.params.valuesdict()[f"Ts{i}"]}')
+    #plt.xlim(-20,20)
+    #plt.axhline(y=0)
+    #plt.legend()
+    #plt.show()
+    
+    
+    #write the outputs and residuals to a dictionary for each permutation calculation
+    orderinglog[f'permutation_{k}']=out.params
+    orderinglog[f'permutation_{k}_residuals']=data-fit
+    
+    print(f'Done {k} of {len(comp_permutations)}')
+print(time.clock()-t_0)
 
 
 def gaussian_lmfit(amplitude,width,position,length):
