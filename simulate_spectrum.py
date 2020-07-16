@@ -2,26 +2,25 @@ import os, glob, time
 import numpy as np
 import pickle
 from tqdm import tqdm_notebook as tqdm
-
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-
 from scipy.interpolate import interp1d
-
 from astropy.io import fits
-
 import gausspy.gausspy.gp as gp
 from gausspyplus.utils.gaussian_functions import gaussian, combined_gaussian
-
 from astropy.io import fits
-
 import astropy.units as u
 from spectral_cube import SpectralCube
-
 from radio_beam import Beam
 import numpy as np
 import schwimmbad
 import datetime
+from numpy import exp, linspace, pi, random, sign, sin
+from lmfit import Parameters, minimize
+from lmfit.printfuncs import report_fit
+import string
+
+
 
 def make_vel_ax(vel0=None,delvel=None,vellen=None,header=None,kms=True):
     '''vel0, delvel and vellen values given in km/s. Because its supplied in km/s 
@@ -189,6 +188,7 @@ data=None):
     Component should have format (fwhm,pos,Ts,Tau)
     Noise is in std devs and hence in the units of the spectrum
     '''
+
     #record the input components
     inputcomps=[i for i in comps]
 
@@ -258,32 +258,65 @@ data=None):
 
 
 ########################
-def process_ordering(input):
+def lmfit_multiproc_wrapper(input):
+    '''processes one of the permutations on one processor'''
+
     #split inputs into the components
-    vcacube, chansamps, array_save_loc, fig_save_loc = input
+    velax, mean_order_values, em_comps_no_match = input
+    
     print('starting'+str(vcacube))	
 
-    #do full thickness mom0 SPS and add to array first
-    #import data and compute moment 0
-    moment0=vcacube.moment(order=0)
+    
 
-    #compute SPS, add in distance at some point as parameter
-    pspec = PowerSpectrum(moment0)
-    pspec.run(verbose=False, xunit=u.pix**-1)
-    vca_array=[pspec.slope,len(vcacube[:,0,0]),pspec.slope_err]
+    for frac in [0,0.5,1]:
+        
 
-    #iterate VCA over fractions of the total width of the PPV vcacube
-    #for i in [128,64,32,16,8,4,2,1]:
-    for i in chansamps:
-        vcacube.allow_huge_operations=True
-        downsamp_vcacube = vcacube.downsample_axis(i, axis=0)
-        downsamp_vcacube.allow_huge_operations=True
-        vca = VCA(downsamp_vcacube)
-        vca.run(verbose=True, save_name=f'{fig_save_loc}_thickness{i}.png')
-        vca_array=np.vstack((vca_array,[vca.slope,i,vca.slope_err]))
+        fit_params = Parameters()
 
-    #save the array for future plotting without recomputing
-    np.save(array_save_loc, vca_array)
+        #parameterise the cold comps output from the ordering solution
+        for i, comp in enumerate(mean_order_values):
+            fit_params.add(f'cold_width{i}', value=mean_order_values[f'{comp}'][0], vary=False)
+            fit_params.add(f'cold_pos{i}', value=mean_order_values[f'{comp}'][1], vary= False)
+            fit_params.add(f'cold_Ts{i}', value=mean_order_values[f'{comp}'][2], vary=False)
+            fit_params.add(f'cold_tau{i}', value=mean_order_values[f'{comp}'][3], vary=False)
+
+        #parameterise the warm comps
+        for i, comp in enumerate(em_comps_no_match):
+            fit_params.add(f'warm_amp{i}', value=comp[0], vary=True,
+                            min=comp[0]-0.1*np.abs(comp[0]),
+                            max=comp[0]+0.1*np.abs(comp[0]))
+            fit_params.add(f'warm_width{i}', value=comp[1], vary=True,
+                            min=comp[1]-0.1*np.abs(comp[1]),
+                            max=comp[1]+0.1*np.abs(comp[1]))
+            fit_params.add(f'warm_pos{i}', value=comp[2], vary=True,
+                            min=comp[2]-0.1*np.abs(comp[2]),
+                            max=comp[2]+0.1*np.abs(comp[2]))
+        
+
+        '''feed in the above paramaters into the simulate_spec function, 
+        length is fed in as a kwarg ratherc than arg because lmfit (specifically the args=(x,)) 
+        means i need to make the length the last parameter but for a gathered parameter *comps
+        it is ambiguous as to which variable is the length'''
+
+        out = minimize(
+            trb.simulate_spec_kcomp_lmfit, 
+            fit_params, 
+            method='leastsq', 
+            args=(x,), 
+            kws={'data': tb_reg, 'vel_ax': xspace,'length': x,'frac':frac}
+            )
+        #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
+
+        fit = trb.simulate_spec_kcomp_lmfit(out.params, length=x, vel_ax=xspace)[0]
+        
+        
+        
+        
+        #write the outputs and residuals to a dictionary for each permutation calculation
+        orderinglog[f'permutation_{k}']=out.params
+        orderinglog[f'permutation_{k}_residuals']=data-fit
+        
+        print(f'Done {k} of {len(comp_permutations)}')
 
     print('finished'+str(vcacube))
     return vca_array
@@ -291,114 +324,79 @@ def process_ordering(input):
 
 #####################
 
-def multiproc_permutations(subcube_locs,channels,output_loc,fig_loc,dimensions):
-	""" subcube_locs must be a list containing the string preceding the dimensions and subcube details. 
-	e.g. everything before '..._7x7_x1_y2.fits' can be a list of multiple prefixes if needed.
+def multiproc_permutations(
+    velocityspace,
+    coldcomps,
+    warmcomps,
+    datatofit,
+    output_loc,
+    sampstart=None,
+    samp_spacing=1,
+    sampend=None):
+	""" inputcomps should be a tuple of tuples each contianing four elements (
+        e.g. (width0,pos0,Ts0,tau0),(width1,pos1,Ts1,tau1)....)
+        
+        need to take the output gausspy component initial guesses , input spectrum to fit to
 
-	arrayloc=/priv/myrtle1/gaskap/nickill/smc/vca/turbustatoutput/simcube_him_7x7_avatar 
+        distribute a unique permutation and output to each processor with the same input spectrum
+        
+        """
+    
+    #start clock
+    t_0=time.clock()
 
-	channels should be input as a list and be factors of the total channel range in decreasing order e.g. [32,16,8,4,2,1] """
-	
-	with schwimmbad.MultiPool() as pool:
+    orderinglog=dict()
+
+    #permute the ordering of the identified components
+    comp_permutations = tuple(permutations(inputcomps))
+
+    #create a number of indices equal to the number of components then permute them. 
+    #Index array should now be shuffled in the same way as the components
+    indexarray=tuple(permutations(tuple(string.ascii_lowercase[:len(comp_permutations[0])])))
+    #make the tuples into arrays so i can use list functions on them, 
+    #needs to be sampled the same as the permutations array if only taking a subset of 
+    #the whole set of possible permutations
+    indexarray=np.array(indexarray)
+
+    #identify the original spectrum to fit against, this is in Tb here
+    em_comps_no_match=tuple((em_amps_em[i], em_fwhms_em[i],em_means_em[i]) for i in range(len(em_amps_em)))
+    kcomps=trb.sumgaussians(data_dec['x_values'][0],*em_comps_no_match)
+    data = tb_reg-kcomps
+
+    #specify subset sampling of all permutations to reduce compute time for trials, 
+    #defaults to computing all permutations
+    indexarray=indexarray[sampstart:sampend:samp_spacing]
+    comp_permutations=comp_permutations[sampstart:sampend:samp_spacing]
+    
+    
+    
+    with schwimmbad.MultiPool() as pool:
 		print('started multi processing')
 		print(datetime.datetime.now())
 
 		#create the lists for multiprocessing
-		#vcacube=[f'{subcube_locs}_{dimensions}x{dimensions}_x{i}_y{j}.fits' for j in np.arange(0,dimensions) for i in np.arange(0,dimensions)]
-		vcacube=[f'{k}_{dimensions}x{dimensions}_x{i}_y{j}.fits' for k in subcube_locs for j in np.arange(0,dimensions) for i in np.arange(0,dimensions)]
-		chansamps=[channels for j in np.arange(0,dimensions) for k in subcube_locs for i in np.arange(0,dimensions)]
-		#arrayloc=[f'{output_loc}_{dimensions}x{dimensions}_x{i}_y{j}' for j in np.arange(0,dimensions) for i in np.arange(0,dimensions)]
-		arrayloc=[f'{k}_{dimensions}x{dimensions}_x{i}_y{j}' for k in output_loc for j in np.arange(0,dimensions) for i in np.arange(0,dimensions)]
-		#figloc=[f'{fig_loc}_{dimensions}x{dimensions}_x{i}_y{j}' for j in np.arange(0,dimensions) for i in np.arange(0,dimensions)]
-		figloc=[f'{k}_{dimensions}x{dimensions}_x{i}_y{j}' for k in fig_loc for j in np.arange(0,dimensions) for i in np.arange(0,dimensions)]
+        comp_ordering=comp_permutations
+        process_no=[i for i in range(len(comp_ordering))]
+		warmcomps=[warmcomps for i in range(len(comp_ordering))] #warm comps don't change so add the same values to each cold comp permutation
+        data_to_fit=[data_to_fit for i in range(len(comp_ordering))]
 
+		inputs=list(zip(comp_ordering,process_no,warmcomps,data_to_fit))
+		#print(f'THESE ARE THE INPUTS FOR MULTIPROCESSING:{inputs}')
 
-		inputs=list(zip(vcacube,chansamps,arrayloc,figloc))
-		print(f'THESE ARE THE INPUTS FOR MULTIPROCESSING:{inputs}')
-
-		out = list(pool.map(do_vca, inputs))
+        out = list(pool.map(do_vca, inputs))
 		print('finished multiprocessing')
 		print(datetime.datetime.now())
 	print(out)
 
-t_0=time.clock()
+execution_time=time.clock()-t_0
+pickle.dump(orderinglog, open(f'{output_loc}', 'wb'))
+
+
 
 #write the orderings to the log so that its saved with the data and is retrievable
 orderinglog['indexarray']=indexarray
 orderinglog['comp_permutations']=comp_permutations
 
-
-fit_params = Parameters()
-for k in range(len(comp_permutations)):
-#for k in range(len(comp_permutations)): # loops over each permutation 
-    #needs to be sampled the same as the index array lower down if only taking a subset of 
-    #the whole set of possible permutations
-    for i in range(len(comp_permutations[k])): #loops over each component in a permutation
-        #set the lmfit paramaters:
-        fit_params.add(f'width{i}', value=comp_permutations[k][i][0], vary=True,
-                       min=comp_permutations[k][i][0]-0.1*np.abs(comp_permutations[k][i][0]),
-                       max=comp_permutations[k][i][0]+0.1*np.abs(comp_permutations[k][i][0]))
-        fit_params.add(f'pos{i}', value=comp_permutations[k][i][1], vary= True,
-                       min=comp_permutations[k][i][1]-0.1*np.abs(comp_permutations[k][i][1]),
-                       max=comp_permutations[k][i][1]+0.1*np.abs(comp_permutations[k][i][1]))
-        fit_params.add(f'Ts{i}', value=comp_permutations[k][i][2], vary=True,
-                       min=0.055, #rms noise on emission is 0.055K
-                       max=10000)
-        fit_params.add(f'tau{i}', value=comp_permutations[k][i][3], vary=False)
-    
-    ##plot the input spectrum, kcomps and the reconstructed gaussian components
-    #plt.plot(xspace,data)
-    #plt.plot(xspace,kcomps)
-    #for i in range(len(comp_permutations[k])):
-    #    plt.plot(xspace,trb.simulate_comp(fit_params[f'width{i}'].value,
-    #                                  fit_params[f'pos{i}'].value,
-    #                                  ts_0=fit_params[f'Ts{i}'].value,
-    #                                  tau_0=fit_params[f'tau{i}'].value,
-    #                                  vel_ax=xspace)[0])
-    #plt.figure()
-
-    ##plots look fine the problem is after this point
-    
-    '''feed in the above paramaters into the simulate_spec function, 
-    length is fed in as a kwarg ratherc than arg because lmfit (specifically the args=(x,)) 
-    means i need to make the length the last parameter but for a gathered parameter *comps
-    it is ambiguous as to which variable is the length'''
-    out = minimize(trb.simulate_spec_lmfit, fit_params, method='leastsq', args=(x,), kws={'data': data, 'vel_ax': xspace,'length': x})
-    #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
-    
-    fit = trb.simulate_spec_lmfit(out.params, length=x, vel_ax=xspace)[0] 
-    
-    
-    #display junk
-    #report_fit(out, show_correl=True)
-    out.params.pretty_print()   
-
-    #don't think r squared is actually applicable to non-linear data but whatevs
-    print(f' R-squared = {1-np.sum(np.square(data-fit))/len(data)}')
-
-    #plot the results
-    #plt.plot(xspace, data, c='grey', ls=':',label='data')
-    #plt.plot(xspace, fit, c='black', ls='dashed',label='fit',lw=1)
-    #plt.plot(xspace, data-fit, 'k.',label='residuals')
-    #for i in range(len(comp_permutations[k])):
-    #    plt.plot(xspace,trb.simulate_comp(out.params[f'width{i}'],
-    #                                 out.params[f'pos{i}'],
-    #                                 ts_0=out.params[f'Ts{i}'],
-    #                                 tau_0=out.params[f'tau{i}'],vel_ax=xspace)[0],
-    #             label=f'comp {i}')
-    #    print(f'Comp {i} Ts = {out.params.valuesdict()[f"Ts{i}"]}')
-    #plt.xlim(-20,20)
-    #plt.axhline(y=0)
-    #plt.legend()
-    #plt.show()
-    
-    
-    #write the outputs and residuals to a dictionary for each permutation calculation
-    orderinglog[f'permutation_{k}']=out.params
-    orderinglog[f'permutation_{k}_residuals']=data-fit
-    
-    print(f'Done {k} of {len(comp_permutations)}')
-print(time.clock()-t_0)
 
 
 def gaussian_lmfit(amplitude,width,position,length):
