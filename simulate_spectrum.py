@@ -262,15 +262,13 @@ def lmfit_multiproc_wrapper(input):
     '''processes one of the permutations on one processor'''
 
     #split inputs into the components
-    velax, mean_order_values, em_comps_no_match = input
+    comp_ordering,process_no,warmcomps,data_to_fit = input
     
-    print('starting'+str(vcacube))	
+    print(f'Starting {process_no}')	
 
-    
+    orderinglog=dict()
 
     for frac in [0,0.5,1]:
-        
-
         fit_params = Parameters()
 
         #parameterise the cold comps output from the ordering solution
@@ -309,16 +307,14 @@ def lmfit_multiproc_wrapper(input):
 
         fit = trb.simulate_spec_kcomp_lmfit(out.params, length=x, vel_ax=xspace)[0]
         
-        
-        
-        
         #write the outputs and residuals to a dictionary for each permutation calculation
-        orderinglog[f'permutation_{k}']=out.params
-        orderinglog[f'permutation_{k}_residuals']=data-fit
+        orderinglog[f'permutation_{k}_frac_{frac}']=out.params
+        orderinglog[f'permutation_{k}_frac_{frac}_residuals']=data_to_fit-fit
         
         print(f'Done {k} of {len(comp_permutations)}')
 
-    print('finished'+str(vcacube))
+    pickle.dump(orderinglog, open(f'{output_loc}', 'wb'))
+    print(f'Finished {process_no}')
     return vca_array
 
 
@@ -328,27 +324,38 @@ def multiproc_permutations(
     velocityspace,
     coldcomps,
     warmcomps,
-    datatofit,
+    input_spec,
     output_loc,
     sampstart=None,
     samp_spacing=1,
     sampend=None):
-	""" inputcomps should be a tuple of tuples each contianing four elements (
-        e.g. (width0,pos0,Ts0,tau0),(width1,pos1,Ts1,tau1)....)
-        
-        need to take the output gausspy component initial guesses , input spectrum to fit to
 
-        distribute a unique permutation and output to each processor with the same input spectrum
-        
-        """
-    
+    """
+    velocityspace - array 
+
+    coldcomps - tuple of tuples containing the outputs from the gausspy initial guesses (e.g. comps_all_reconstruct) (
+    e.g. (width0,pos0,Ts0,tau0),(width1,pos1,Ts1,tau1)....)
+
+    warmcomps - em_comps_no_match
+
+    datatofit - 
+    output_loc - 
+    sampstart - int
+    samp_spacing - int
+    sampend - int
+
+    inputcomps should be a tuple of tuples each contianing four elements 
+
+    need to take the output gausspy component initial guesses , input spectrum to fit to
+
+    distribute a unique permutation and output to each processor with the same input spectrum
+    """
+
     #start clock
-    t_0=time.clock()
-
-    orderinglog=dict()
+    t_0=time.time()
 
     #permute the ordering of the identified components
-    comp_permutations = tuple(permutations(inputcomps))
+    comp_permutations = tuple(permutations(coldcomps))
 
     #create a number of indices equal to the number of components then permute them. 
     #Index array should now be shuffled in the same way as the components
@@ -359,43 +366,41 @@ def multiproc_permutations(
     indexarray=np.array(indexarray)
 
     #identify the original spectrum to fit against, this is in Tb here
-    em_comps_no_match=tuple((em_amps_em[i], em_fwhms_em[i],em_means_em[i]) for i in range(len(em_amps_em)))
-    kcomps=trb.sumgaussians(data_dec['x_values'][0],*em_comps_no_match)
-    data = tb_reg-kcomps
+    kcomps=trb.sumgaussians(velocityspace,*warmcomps)
+    input_spec_less_kcomps = input_spec-kcomps
 
     #specify subset sampling of all permutations to reduce compute time for trials, 
     #defaults to computing all permutations
     indexarray=indexarray[sampstart:sampend:samp_spacing]
     comp_permutations=comp_permutations[sampstart:sampend:samp_spacing]
     
-    
-    
     with schwimmbad.MultiPool() as pool:
-		print('started multi processing')
-		print(datetime.datetime.now())
+        print('started multi processing')
+        print(datetime.datetime.now())
 
-		#create the lists for multiprocessing
+        #create the lists for multiprocessing
         comp_ordering=comp_permutations
         process_no=[i for i in range(len(comp_ordering))]
-		warmcomps=[warmcomps for i in range(len(comp_ordering))] #warm comps don't change so add the same values to each cold comp permutation
+        warmcomps=[warmcomps for i in range(len(comp_ordering))] #warm comps don't change so add the same values to each cold comp permutation
         data_to_fit=[data_to_fit for i in range(len(comp_ordering))]
+        velocityspace=[velocityspace for i in range(len(comp_ordering))]
+        input_spec=[input_spec for i in range(len(comp_ordering))
+        input_spec_less_kcomps=[input_spec_less_kcomps for i in range(len(comp_ordering))
 
-		inputs=list(zip(comp_ordering,process_no,warmcomps,data_to_fit))
-		#print(f'THESE ARE THE INPUTS FOR MULTIPROCESSING:{inputs}')
+        inputs=list(zip(comp_ordering,process_no,warmcomps,data_to_fit))
+        #print(f'THESE ARE THE INPUTS FOR MULTIPROCESSING:{inputs}')
 
-        out = list(pool.map(do_vca, inputs))
-		print('finished multiprocessing')
-		print(datetime.datetime.now())
-	print(out)
+        out = list(pool.map(lmfit_multiproc_wrapper, inputs))
+        print('finished multiprocessing')
+        print(datetime.datetime.now())
+        
+    #print(out)
+    pickle.dump(out, open(f'{output_loc}', 'wb'))
+    pickle.dump(indexarray, open(f'{output_loc}_indexarray', 'wb'))
+    pickle.dump(comp_permutations, open(f'{output_loc}_comp_permutations', 'wb'))
 
-execution_time=time.clock()-t_0
-pickle.dump(orderinglog, open(f'{output_loc}', 'wb'))
+    print(time.time()-t_0)
 
-
-
-#write the orderings to the log so that its saved with the data and is retrievable
-orderinglog['indexarray']=indexarray
-orderinglog['comp_permutations']=comp_permutations
 
 
 
