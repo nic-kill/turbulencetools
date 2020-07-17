@@ -262,60 +262,69 @@ def lmfit_multiproc_wrapper(input):
     '''processes one of the permutations on one processor'''
 
     #split inputs into the components
-    comp_ordering,process_no,warmcomps,data_to_fit = input
+    comp_ordering, process_no, warmcomps, data_to_fit, velocityspace = input
     
     print(f'Starting {process_no}')	
 
+    #identify the original spectrum to fit against, this is in Tb here
+    #kcomps=trb.sumgaussians(velocityspace,*warmcomps)
+    #input_spec_less_kcomps = input_spec-kcomps
+
     orderinglog=dict()
 
-    for frac in [0,0.5,1]:
-        fit_params = Parameters()
+    #for frac in [0,0.5,1]:
 
-        #parameterise the cold comps output from the ordering solution
-        for i, comp in enumerate(mean_order_values):
-            fit_params.add(f'cold_width{i}', value=mean_order_values[f'{comp}'][0], vary=False)
-            fit_params.add(f'cold_pos{i}', value=mean_order_values[f'{comp}'][1], vary= False)
-            fit_params.add(f'cold_Ts{i}', value=mean_order_values[f'{comp}'][2], vary=False)
-            fit_params.add(f'cold_tau{i}', value=mean_order_values[f'{comp}'][3], vary=False)
+    #throwaway params that do nothing atm because im shit at coding and don't want to break things
+    frac=0
+    x=10
 
-        #parameterise the warm comps
-        for i, comp in enumerate(em_comps_no_match):
-            fit_params.add(f'warm_amp{i}', value=comp[0], vary=True,
-                            min=comp[0]-0.1*np.abs(comp[0]),
-                            max=comp[0]+0.1*np.abs(comp[0]))
-            fit_params.add(f'warm_width{i}', value=comp[1], vary=True,
-                            min=comp[1]-0.1*np.abs(comp[1]),
-                            max=comp[1]+0.1*np.abs(comp[1]))
-            fit_params.add(f'warm_pos{i}', value=comp[2], vary=True,
-                            min=comp[2]-0.1*np.abs(comp[2]),
-                            max=comp[2]+0.1*np.abs(comp[2]))
-        
+    fit_params = Parameters()
 
-        '''feed in the above paramaters into the simulate_spec function, 
-        length is fed in as a kwarg ratherc than arg because lmfit (specifically the args=(x,)) 
-        means i need to make the length the last parameter but for a gathered parameter *comps
-        it is ambiguous as to which variable is the length'''
+    #parameterise the cold comps output from the ordering solution
+    for i, comp in enumerate(comp_ordering):
+        fit_params.add(f'cold_width{i}', value=comp_ordering[f'{comp}'][0], vary=False)
+        fit_params.add(f'cold_pos{i}', value=comp_ordering[f'{comp}'][1], vary= False)
+        fit_params.add(f'cold_Ts{i}', value=comp_ordering[f'{comp}'][2], vary=False)
+        fit_params.add(f'cold_tau{i}', value=comp_ordering[f'{comp}'][3], vary=False)
 
-        out = minimize(
-            trb.simulate_spec_kcomp_lmfit, 
-            fit_params, 
-            method='leastsq', 
-            args=(x,), 
-            kws={'data': tb_reg, 'vel_ax': xspace,'length': x,'frac':frac}
-            )
-        #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
+    ##parameterise the warm comps
+    #for i, comp in enumerate(warmcomps):
+    #    fit_params.add(f'warm_amp{i}', value=comp[0], vary=True,
+    #                    min=comp[0]-0.1*np.abs(comp[0]),
+    #                    max=comp[0]+0.1*np.abs(comp[0]))
+    #    fit_params.add(f'warm_width{i}', value=comp[1], vary=True,
+    #                    min=comp[1]-0.1*np.abs(comp[1]),
+    #                    max=comp[1]+0.1*np.abs(comp[1]))
+    #    fit_params.add(f'warm_pos{i}', value=comp[2], vary=True,
+    #                   min=comp[2]-0.1*np.abs(comp[2]),
+    #                   max=comp[2]+0.1*np.abs(comp[2]))
+    
 
-        fit = trb.simulate_spec_kcomp_lmfit(out.params, length=x, vel_ax=xspace)[0]
-        
+    '''feed in the above paramaters into the simulate_spec function, 
+    length is fed in as a kwarg ratherc than arg because lmfit (specifically the args=(x,)) 
+    means i need to make the length the last parameter but for a gathered parameter *comps
+    it is ambiguous as to which variable is the length'''
+
+    out = minimize(
+        trb.simulate_spec_kcomp_lmfit, 
+        fit_params, 
+        method='leastsq', 
+        args=(x,), 
+        kws={'data': data_to_fit, 'vel_ax': velocityspace,'length': x,'frac':frac}
+        )
+    #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
+
+    fit = trb.simulate_spec_kcomp_lmfit(out.params, length=x, vel_ax=velocityspace)[0]
+    
         #write the outputs and residuals to a dictionary for each permutation calculation
-        orderinglog[f'permutation_{k}_frac_{frac}']=out.params
-        orderinglog[f'permutation_{k}_frac_{frac}_residuals']=data_to_fit-fit
-        
-        print(f'Done {k} of {len(comp_permutations)}')
+        #orderinglog[f'permutation_{k}_frac_{frac}']=out.params
+        #orderinglog[f'permutation_{k}_frac_{frac}_residuals']=data_to_fit-fit
+    orderinglog[f'permutation_{process_no}_frac_{frac}']=out.params
+    orderinglog[f'permutation_{process_no}_frac_{frac}_residuals']=data_to_fit-fit
 
-    pickle.dump(orderinglog, open(f'{output_loc}', 'wb'))
+    #pickle.dump(orderinglog, open(f'{output_loc}', 'wb'))
     print(f'Finished {process_no}')
-    return vca_array
+    return orderinglog
 
 
 #####################
@@ -365,10 +374,6 @@ def multiproc_permutations(
     #the whole set of possible permutations
     indexarray=np.array(indexarray)
 
-    #identify the original spectrum to fit against, this is in Tb here
-    kcomps=trb.sumgaussians(velocityspace,*warmcomps)
-    input_spec_less_kcomps = input_spec-kcomps
-
     #specify subset sampling of all permutations to reduce compute time for trials, 
     #defaults to computing all permutations
     indexarray=indexarray[sampstart:sampend:samp_spacing]
@@ -384,10 +389,10 @@ def multiproc_permutations(
         warmcomps=[warmcomps for i in range(len(comp_ordering))] #warm comps don't change so add the same values to each cold comp permutation
         data_to_fit=[data_to_fit for i in range(len(comp_ordering))]
         velocityspace=[velocityspace for i in range(len(comp_ordering))]
-        input_spec=[input_spec for i in range(len(comp_ordering))
-        input_spec_less_kcomps=[input_spec_less_kcomps for i in range(len(comp_ordering))
+        #input_spec=[input_spec for i in range(len(comp_ordering))]
+        #input_spec_less_kcomps=[input_spec_less_kcomps for i in range(len(comp_ordering))]
 
-        inputs=list(zip(comp_ordering,process_no,warmcomps,data_to_fit))
+        inputs=list(zip(comp_ordering,process_no,warmcomps,data_to_fit,velocityspace))
         #print(f'THESE ARE THE INPUTS FOR MULTIPROCESSING:{inputs}')
 
         out = list(pool.map(lmfit_multiproc_wrapper, inputs))
