@@ -19,6 +19,7 @@ from numpy import exp, linspace, pi, random, sign, sin
 from lmfit import Parameters, minimize
 from lmfit.printfuncs import report_fit
 import string
+from itertools import permutations 
 
 
 
@@ -279,13 +280,14 @@ def lmfit_multiproc_wrapper(input):
     x=10
 
     fit_params = Parameters()
+    print(comp_ordering)
 
     #parameterise the cold comps output from the ordering solution
     for i, comp in enumerate(comp_ordering):
-        fit_params.add(f'cold_width{i}', value=comp_ordering[f'{comp}'][0], vary=False)
-        fit_params.add(f'cold_pos{i}', value=comp_ordering[f'{comp}'][1], vary= False)
-        fit_params.add(f'cold_Ts{i}', value=comp_ordering[f'{comp}'][2], vary=False)
-        fit_params.add(f'cold_tau{i}', value=comp_ordering[f'{comp}'][3], vary=False)
+        fit_params.add(f'cold_width{i}', value=comp_ordering[i][0], vary=False)
+        fit_params.add(f'cold_pos{i}', value=comp_ordering[i][1], vary= False)
+        fit_params.add(f'cold_Ts{i}', value=comp_ordering[i][2], vary=False)
+        fit_params.add(f'cold_tau{i}', value=comp_ordering[i][3], vary=False)
 
     ##parameterise the warm comps
     #for i, comp in enumerate(warmcomps):
@@ -306,15 +308,15 @@ def lmfit_multiproc_wrapper(input):
     it is ambiguous as to which variable is the length'''
 
     out = minimize(
-        trb.simulate_spec_kcomp_lmfit, 
+        simulate_spec_kcomp_lmfit, 
         fit_params, 
-        method='leastsq', 
+        method='brute', 
         args=(x,), 
         kws={'data': data_to_fit, 'vel_ax': velocityspace,'length': x,'frac':frac}
         )
     #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
 
-    fit = trb.simulate_spec_kcomp_lmfit(out.params, length=x, vel_ax=velocityspace)[0]
+    fit = simulate_spec_kcomp_lmfit(out.params, length=x, vel_ax=velocityspace)[0]
     
         #write the outputs and residuals to a dictionary for each permutation calculation
         #orderinglog[f'permutation_{k}_frac_{frac}']=out.params
@@ -387,12 +389,12 @@ def multiproc_permutations(
         comp_ordering=comp_permutations
         process_no=[i for i in range(len(comp_ordering))]
         warmcomps=[warmcomps for i in range(len(comp_ordering))] #warm comps don't change so add the same values to each cold comp permutation
-        data_to_fit=[data_to_fit for i in range(len(comp_ordering))]
+        input_spec=[input_spec for i in range(len(comp_ordering))]
         velocityspace=[velocityspace for i in range(len(comp_ordering))]
         #input_spec=[input_spec for i in range(len(comp_ordering))]
         #input_spec_less_kcomps=[input_spec_less_kcomps for i in range(len(comp_ordering))]
 
-        inputs=list(zip(comp_ordering,process_no,warmcomps,data_to_fit,velocityspace))
+        inputs=list(zip(comp_ordering,process_no,warmcomps,input_spec,velocityspace))
         #print(f'THESE ARE THE INPUTS FOR MULTIPROCESSING:{inputs}')
 
         out = list(pool.map(lmfit_multiproc_wrapper, inputs))
@@ -400,9 +402,9 @@ def multiproc_permutations(
         print(datetime.datetime.now())
         
     #print(out)
-    pickle.dump(out, open(f'{output_loc}', 'wb'))
-    pickle.dump(indexarray, open(f'{output_loc}_indexarray', 'wb'))
-    pickle.dump(comp_permutations, open(f'{output_loc}_comp_permutations', 'wb'))
+    pickle.dump(out, open(f'{output_loc}.pickle', 'wb'))
+    pickle.dump(indexarray, open(f'{output_loc}_indexarray.pickle', 'wb'))
+    pickle.dump(comp_permutations, open(f'{output_loc}_comp_permutations.pickle', 'wb'))
 
     print(time.time()-t_0)
 
