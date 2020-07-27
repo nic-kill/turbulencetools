@@ -243,7 +243,7 @@ data=None):
 
     #only proceed if warm components are specified
     if len(warmcomps.keys()) > 0:
-        for i in range(0,int(len(warmcomps)/3)):
+        for i in range(0,int(len(warmcomps)/3)): #warm comps are specified by (amp,width,pos) hence divide by 3
             spectrum+=(frac+((1-frac)*np.exp(-sumtaus)))*gaussian(gausslen,warmcomps[f'warm_amp{i}'],warmcomps[f'warm_width{i}'],warmcomps[f'warm_pos{i}'])
 
 
@@ -263,7 +263,7 @@ def lmfit_multiproc_wrapper(input):
     '''processes one of the permutations on one processor'''
 
     #split inputs into the components
-    comp_ordering, process_no, warmcomps, data_to_fit, velocityspace = input
+    comp_ordering, process_no, warmcomps, input_spec, velocityspace = input
     
     print(f'Starting {process_no}')	
 
@@ -274,7 +274,7 @@ def lmfit_multiproc_wrapper(input):
     orderinglog=dict()
 
     #for frac in [0,0.5,1]:
-
+    input_spec_less_kcomps=input_spec-(sumgaussians(velocityspace,*warmcomps))
     #throwaway params that do nothing atm because im shit at coding and don't want to break things
     frac=0
     x=10
@@ -284,9 +284,9 @@ def lmfit_multiproc_wrapper(input):
 
     #parameterise the cold comps output from the ordering solution
     for i, comp in enumerate(comp_ordering):
-        fit_params.add(f'cold_width{i}', value=comp_ordering[i][0], vary=False)
-        fit_params.add(f'cold_pos{i}', value=comp_ordering[i][1], vary= False)
-        fit_params.add(f'cold_Ts{i}', value=comp_ordering[i][2], vary=False)
+        fit_params.add(f'cold_width{i}', value=comp_ordering[i][0], vary=True)
+        fit_params.add(f'cold_pos{i}', value=comp_ordering[i][1], vary= True)
+        fit_params.add(f'cold_Ts{i}', value=comp_ordering[i][2], vary=True)
         fit_params.add(f'cold_tau{i}', value=comp_ordering[i][3], vary=False)
 
     ##parameterise the warm comps
@@ -310,9 +310,9 @@ def lmfit_multiproc_wrapper(input):
     out = minimize(
         simulate_spec_kcomp_lmfit, 
         fit_params, 
-        method='brute', 
+        method='leastsq', 
         args=(x,), 
-        kws={'data': data_to_fit, 'vel_ax': velocityspace,'length': x,'frac':frac}
+        kws={'data': input_spec_less_kcomps, 'vel_ax': velocityspace,'length': x,'frac':frac}
         )
     #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
 
@@ -320,9 +320,9 @@ def lmfit_multiproc_wrapper(input):
     
         #write the outputs and residuals to a dictionary for each permutation calculation
         #orderinglog[f'permutation_{k}_frac_{frac}']=out.params
-        #orderinglog[f'permutation_{k}_frac_{frac}_residuals']=data_to_fit-fit
+        #orderinglog[f'permutation_{k}_frac_{frac}_residuals']=input_spec-fit
     orderinglog[f'permutation_{process_no}_frac_{frac}']=out.params
-    orderinglog[f'permutation_{process_no}_frac_{frac}_residuals']=data_to_fit-fit
+    orderinglog[f'permutation_{process_no}_frac_{frac}_residuals']=input_spec-fit
 
     #pickle.dump(orderinglog, open(f'{output_loc}', 'wb'))
     print(f'Finished {process_no}')
@@ -380,6 +380,9 @@ def multiproc_permutations(
     #defaults to computing all permutations
     indexarray=indexarray[sampstart:sampend:samp_spacing]
     comp_permutations=comp_permutations[sampstart:sampend:samp_spacing]
+
+
+
     
     with schwimmbad.MultiPool() as pool:
         print('started multi processing')
@@ -391,8 +394,6 @@ def multiproc_permutations(
         warmcomps=[warmcomps for i in range(len(comp_ordering))] #warm comps don't change so add the same values to each cold comp permutation
         input_spec=[input_spec for i in range(len(comp_ordering))]
         velocityspace=[velocityspace for i in range(len(comp_ordering))]
-        #input_spec=[input_spec for i in range(len(comp_ordering))]
-        #input_spec_less_kcomps=[input_spec_less_kcomps for i in range(len(comp_ordering))]
 
         inputs=list(zip(comp_ordering,process_no,warmcomps,input_spec,velocityspace))
         #print(f'THESE ARE THE INPUTS FOR MULTIPROCESSING:{inputs}')
@@ -408,7 +409,40 @@ def multiproc_permutations(
 
     print(time.time()-t_0)
 
+def weighted_comp_vals(orderinglog,comp_permutations,indexarray):
+    '''returns the cold comp (FWHM,pos,Ts,tau) with weighting from HT03 applied based 
+    on all permutations of the comp ordering given'''
+    mean_order_values=dict()
 
+    #trace a given component through all its permutations
+    for comp in string.ascii_lowercase[:len(comp_permutations[0])]:
+        print(comp)
+        comp_of_interest=np.argwhere(indexarray==comp)
+        #collect the component's values from each ordering
+        compwidth=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_0'].valuesdict()[f'cold_width{ordering[1]}'] for ordering in comp_of_interest]
+        comppos=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_0'].valuesdict()[f'cold_pos{ordering[1]}'] for ordering in comp_of_interest]
+        compts=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_0'].valuesdict()[f'cold_Ts{ordering[1]}'] for ordering in comp_of_interest]
+        comptau=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_0'].valuesdict()[f'cold_tau{ordering[1]}'] for ordering in comp_of_interest]
+        
+        #calculate wf as the variance of the residuals, sec 3.5 HT03
+        wf=[1/(np.std(orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_0_residuals'])**2) for ordering in comp_of_interest]
+
+        #apply the weighting to the component values for each ordering
+        meanwidth=np.sum(np.multiply(compwidth,wf))/(np.sum(wf))
+        meanpos=np.sum(np.multiply(comppos,wf))/(np.sum(wf))
+        meants=np.sum(np.multiply(compts,wf))/(np.sum(wf))
+        meantau=np.sum(np.multiply(comptau,wf))/(np.sum(wf))
+
+        #take these weighted values and input them as a tuple into a dictionary which collates all the components
+        mean_order_values[f'{comp}']=(meanwidth,meanpos,meants,meantau)
+        print(f'Mean Ts = {meants}')
+
+    meancomps=tuple((mean_order_values[f'{i}'][0],
+                     mean_order_values[f'{i}'][1], 
+                     mean_order_values[f'{i}'][2], 
+                     mean_order_values[f'{i}'][3]) 
+                    for i in mean_order_values.keys())
+    return meancomps
 
 
 def gaussian_lmfit(amplitude,width,position,length):
