@@ -273,8 +273,9 @@ def lmfit_multiproc_wrapper(input):
 
     orderinglog=dict()
 
-    #for frac in [0,0.5,1]:
+    #maybe not needed since we feed the input spec in its original form when we specify kcomps are being assessed
     input_spec_less_kcomps=input_spec-(sumgaussians(velocityspace,*warmcomps))
+
     #throwaway params that do nothing atm because im shit at coding and don't want to break things
     frac=0
     x=10
@@ -284,13 +285,30 @@ def lmfit_multiproc_wrapper(input):
 
     #parameterise the cold comps output from the ordering solution
     for i, comp in enumerate(comp_ordering):
-        fit_params.add(f'cold_width{i}', value=comp_ordering[i][0], vary=True)
-        fit_params.add(f'cold_pos{i}', value=comp_ordering[i][1], vary= True)
-        fit_params.add(f'cold_Ts{i}', value=comp_ordering[i][2], vary=True)
-        fit_params.add(f'cold_tau{i}', value=comp_ordering[i][3], vary=False)
+
+        fit_params.add(f'cold_width{i}',
+        value=comp_ordering[i][0],
+        min=comp_ordering[i][0]-0.1*np.abs(comp_ordering[i][0]),
+        max=comp_ordering[i][0]+0.1*np.abs(comp_ordering[i][0]),
+        vary=True)
+
+        fit_params.add(f'cold_pos{i}',
+        value=comp_ordering[i][1],
+        min=comp_ordering[i][1]-0.1*np.abs(comp_ordering[i][1]),
+        max=comp_ordering[i][1]+0.1*np.abs(comp_ordering[i][1]),
+        vary=True)
+
+        fit_params.add(f'cold_Ts{i}',
+        value=comp_ordering[i][2],
+        min=0, #pretty sure i can assume this
+        vary=True)
+
+        fit_params.add(f'cold_tau{i}',
+        value=comp_ordering[i][3], 
+        vary=False)
 
     ##parameterise the warm comps
-    #for i, comp in enumerate(warmcomps):
+    # for i, comp in enumerate(warmcomps):
     #    fit_params.add(f'warm_amp{i}', value=comp[0], vary=True,
     #                    min=comp[0]-0.1*np.abs(comp[0]),
     #                    max=comp[0]+0.1*np.abs(comp[0]))
@@ -318,9 +336,8 @@ def lmfit_multiproc_wrapper(input):
 
     fit = simulate_spec_kcomp_lmfit(out.params, length=x, vel_ax=velocityspace)[0]
     
-        #write the outputs and residuals to a dictionary for each permutation calculation
-        #orderinglog[f'permutation_{k}_frac_{frac}']=out.params
-        #orderinglog[f'permutation_{k}_frac_{frac}_residuals']=input_spec-fit
+    #write the outputs and residuals to a dictionary for each permutation calculation
+
     orderinglog[f'permutation_{process_no}_frac_{frac}']=out.params
     orderinglog[f'permutation_{process_no}_frac_{frac}_residuals']=input_spec-fit
 
