@@ -276,7 +276,7 @@ def lmfit_multiproc_wrapper(input):
     #maybe not needed since we feed the input spec in its original form when we specify kcomps are being assessed
     input_spec_less_kcomps=input_spec-(sumgaussians(velocityspace,*warmcomps))
 
-    #throwaway params that do nothing atm because im shit at coding and don't want to break things
+    #throwaway params that do nothing atm because i suck at coding and don't want to break things
     frac=0
     x=10
 
@@ -300,7 +300,7 @@ def lmfit_multiproc_wrapper(input):
 
         fit_params.add(f'cold_Ts{i}',
         value=comp_ordering[i][2],
-        min=0, #pretty sure i can assume this
+        min=0, #Ts must be positive
         vary=True)
 
         fit_params.add(f'cold_tau{i}',
