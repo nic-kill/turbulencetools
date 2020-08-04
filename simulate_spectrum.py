@@ -20,6 +20,7 @@ from lmfit import Parameters, minimize
 from lmfit.printfuncs import report_fit
 import string
 from itertools import permutations 
+import re
 
 
 
@@ -73,7 +74,7 @@ def simulate_comp(fwhm, pos, header=None, ts_0=None, tau_0=None,vel0=-30,delvel=
 
     return Tb, length
 
-def simulate_spec(*comps,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.1,vellen=600,vel_ax=None):
+def simulate_spec(*comps, warmcomps=None, tb_noise=0, tau_noise=0,vel0=-30,delvel=0.1,vellen=600,vel_ax=None):
     '''First component has no opacity from other components and is physically first in the LOS. 
     Second component inputted will have the first blocking it and so on.
     Component should have format (fwhm,pos,Ts,Tau)
@@ -98,6 +99,7 @@ def simulate_spec(*comps,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.1,vellen=600,
     #set the opacity of the LOS to zero
     sumtaus=0
     
+    #set the ordering of the cold comps and pass the components through one another
     for i in range(1,len(comps)):
         #take the ith component beginning with the second comp
         newcomp, newcomplen = simulate_comp(comps[i][0],comps[i][1],ts_0=comps[i][2],tau_0=comps[i][3],
@@ -109,9 +111,24 @@ def simulate_spec(*comps,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.1,vellen=600,
         #new spectrum = the new component * np.exp(-opacity spectrum for the preceding components)
         spectrum+=newcomp*np.exp(-sumtaus)
         spectrum_no_opac+=newcomp
-        
-    #add in the last components opacity to make the opacity spectrum complete, also add in noise
+
+    #add in the last components opacity to make the opacity spectrum complete
     sumtaus += gaussian(vel_ax,comps[-1][3],comps[-1][0],comps[-1][1])
+
+    if warmcomps is not None:
+        for i in range(1,len(warmcomps)):
+            #take the ith component beginning with the second comp
+            newcomp, newcomplen = simulate_comp(comps[i][0],comps[i][1],ts_0=comps[i][2],tau_0=comps[i][3],
+            vel0=vel0,delvel=delvel,vellen=vellen,vel_ax=vel_ax)
+        
+            #add to the opacity spectrum the i-1th component
+            sumtaus+=gaussian(vel_ax,comps[i-1][3],comps[i-1][0],comps[i-1][1])
+            
+            #new spectrum = the new component * np.exp(-opacity spectrum for the preceding components)
+            spectrum+=newcomp*np.exp(-sumtaus)
+            spectrum_no_opac+=newcomp
+    
+    #add in noise in opacity
     sumtaus += (np.random.normal(0,tau_noise,len(vel_ax)))
     
     #add in tb_noise
@@ -277,69 +294,78 @@ def lmfit_multiproc_wrapper(input):
     input_spec_less_kcomps=input_spec-(sumgaussians(velocityspace,*warmcomps))
 
     #throwaway params that do nothing atm because i suck at coding and don't want to break things
-    frac=0
     x=10
 
-    fit_params = Parameters()
-    print(comp_ordering)
+    for frac in [0,0.5,1]:
 
-    #parameterise the cold comps output from the ordering solution
-    for i, comp in enumerate(comp_ordering):
+        fit_params = Parameters()
+        print(comp_ordering)
 
-        fit_params.add(f'cold_width{i}',
-        value=comp_ordering[i][0],
-        min=comp_ordering[i][0]-0.1*np.abs(comp_ordering[i][0]),
-        max=comp_ordering[i][0]+0.1*np.abs(comp_ordering[i][0]),
-        vary=True)
+        #parameterise the cold comps output from the ordering solution
+        for i, comp in enumerate(comp_ordering):
 
-        fit_params.add(f'cold_pos{i}',
-        value=comp_ordering[i][1],
-        min=comp_ordering[i][1]-0.1*np.abs(comp_ordering[i][1]),
-        max=comp_ordering[i][1]+0.1*np.abs(comp_ordering[i][1]),
-        vary=True)
+            fit_params.add(f'cold_width{i}',
+            value=comp_ordering[i][0],
+            min=comp_ordering[i][0]-0.1*np.abs(comp_ordering[i][0]),
+            max=comp_ordering[i][0]+0.1*np.abs(comp_ordering[i][0]),
+            vary=True)
 
-        fit_params.add(f'cold_Ts{i}',
-        value=comp_ordering[i][2],
-        min=0, #Ts must be positive
-        vary=True)
+            fit_params.add(f'cold_pos{i}',
+            value=comp_ordering[i][1],
+            min=comp_ordering[i][1]-0.1*np.abs(comp_ordering[i][1]),
+            max=comp_ordering[i][1]+0.1*np.abs(comp_ordering[i][1]),
+            vary=True)
 
-        fit_params.add(f'cold_tau{i}',
-        value=comp_ordering[i][3], 
-        vary=False)
+            fit_params.add(f'cold_Ts{i}',
+            value=comp_ordering[i][2],
+            min=0, #Ts must be positive
+            vary=True)
 
-    ##parameterise the warm comps
-    # for i, comp in enumerate(warmcomps):
-    #    fit_params.add(f'warm_amp{i}', value=comp[0], vary=True,
-    #                    min=comp[0]-0.1*np.abs(comp[0]),
-    #                    max=comp[0]+0.1*np.abs(comp[0]))
-    #    fit_params.add(f'warm_width{i}', value=comp[1], vary=True,
-    #                    min=comp[1]-0.1*np.abs(comp[1]),
-    #                    max=comp[1]+0.1*np.abs(comp[1]))
-    #    fit_params.add(f'warm_pos{i}', value=comp[2], vary=True,
-    #                   min=comp[2]-0.1*np.abs(comp[2]),
-    #                   max=comp[2]+0.1*np.abs(comp[2]))
-    
+            fit_params.add(f'cold_tau{i}',
+            value=comp_ordering[i][3], 
+            vary=False)
 
-    '''feed in the above paramaters into the simulate_spec function, 
-    length is fed in as a kwarg ratherc than arg because lmfit (specifically the args=(x,)) 
-    means i need to make the length the last parameter but for a gathered parameter *comps
-    it is ambiguous as to which variable is the length'''
+        ##parameterise the warm comps
+        for i, comp in enumerate(warmcomps):
 
-    out = minimize(
-        simulate_spec_kcomp_lmfit, 
-        fit_params, 
-        method='leastsq', 
-        args=(x,), 
-        kws={'data': input_spec_less_kcomps, 'vel_ax': velocityspace,'length': x,'frac':frac}
-        )
-    #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
+            fit_params.add(f'warm_amp{i}',
+            value=comp[0],
+            min=0,
+            vary=True)
 
-    fit = simulate_spec_kcomp_lmfit(out.params, length=x, vel_ax=velocityspace)[0]
-    
-    #write the outputs and residuals to a dictionary for each permutation calculation
+            fit_params.add(f'warm_width{i}', 
+            value=comp[1],
+            min=comp[1]-0.1*np.abs(comp[1]),
+            max=comp[1]+0.1*np.abs(comp[1]),
+            vary=True)
 
-    orderinglog[f'permutation_{process_no}_frac_{frac}']=out.params
-    orderinglog[f'permutation_{process_no}_frac_{frac}_residuals']=input_spec-fit
+            fit_params.add(f'warm_pos{i}',
+            value=comp[2],
+            min=comp[2]-0.1*np.abs(comp[2]),
+            max=comp[2]+0.1*np.abs(comp[2]),
+            vary=True)
+        
+
+        '''feed in the above paramaters into the simulate_spec function, 
+        length is fed in as a kwarg ratherc than arg because lmfit (specifically the args=(x,)) 
+        means i need to make the length the last parameter but for a gathered parameter *comps
+        it is ambiguous as to which variable is the length'''
+
+        out = minimize(
+            simulate_spec_kcomp_lmfit, 
+            fit_params, 
+            method='leastsq', 
+            args=(x,), 
+            kws={'data': input_spec_less_kcomps, 'vel_ax': velocityspace,'length': x,'frac':frac}
+            )
+        #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
+
+        fit = simulate_spec_kcomp_lmfit(out.params, length=x, vel_ax=velocityspace)[0]
+        
+        #write the outputs and residuals to a dictionary for each permutation calculation
+
+        orderinglog[f'permutation_{process_no}_frac_{frac}']=out.params
+        orderinglog[f'permutation_{process_no}_frac_{frac}_residuals']=input_spec-fit
 
     #pickle.dump(orderinglog, open(f'{output_loc}', 'wb'))
     print(f'Finished {process_no}')
@@ -426,40 +452,64 @@ def multiproc_permutations(
 
     print(time.time()-t_0)
 
-def weighted_comp_vals(orderinglog,comp_permutations,indexarray):
+def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0):
     '''returns the cold comp (FWHM,pos,Ts,tau) with weighting from HT03 applied based 
     on all permutations of the comp ordering given'''
     mean_order_values=dict()
 
-    #trace a given component through all its permutations
-    for comp in string.ascii_lowercase[:len(comp_permutations[0])]:
-        print(comp)
-        comp_of_interest=np.argwhere(indexarray==comp)
-        #collect the component's values from each ordering
-        compwidth=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_0'].valuesdict()[f'cold_width{ordering[1]}'] for ordering in comp_of_interest]
-        comppos=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_0'].valuesdict()[f'cold_pos{ordering[1]}'] for ordering in comp_of_interest]
-        compts=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_0'].valuesdict()[f'cold_Ts{ordering[1]}'] for ordering in comp_of_interest]
-        comptau=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_0'].valuesdict()[f'cold_tau{ordering[1]}'] for ordering in comp_of_interest]
-        
-        #calculate wf as the variance of the residuals, sec 3.5 HT03
-        wf=[1/(np.std(orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_0_residuals'])**2) for ordering in comp_of_interest]
+    for frac in [0,0.5,1]:
+        #do the cold comps
+        #trace a given component through all its permutations
+        for comp in string.ascii_lowercase[:len(comp_permutations[0])]:
+            print(f'cold comp {comp}')
+            comp_of_interest=np.argwhere(indexarray==comp)
+            #collect the component's values from each ordering
+            compwidth=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'].valuesdict()[f'cold_width{ordering[1]}'] for ordering in comp_of_interest]
+            comppos=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'].valuesdict()[f'cold_pos{ordering[1]}'] for ordering in comp_of_interest]
+            compts=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'].valuesdict()[f'cold_Ts{ordering[1]}'] for ordering in comp_of_interest]
+            comptau=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'].valuesdict()[f'cold_tau{ordering[1]}'] for ordering in comp_of_interest]
+            
+            #calculate wf as the variance of the residuals, sec 3.5 HT03
+            wf=[1/(np.std(orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}_residuals'])**2) for ordering in comp_of_interest]
 
-        #apply the weighting to the component values for each ordering
-        meanwidth=np.sum(np.multiply(compwidth,wf))/(np.sum(wf))
-        meanpos=np.sum(np.multiply(comppos,wf))/(np.sum(wf))
-        meants=np.sum(np.multiply(compts,wf))/(np.sum(wf))
-        meantau=np.sum(np.multiply(comptau,wf))/(np.sum(wf))
+            #apply the weighting to the component values for each ordering
+            meanwidth=np.sum(np.multiply(compwidth,wf))/(np.sum(wf))
+            meanpos=np.sum(np.multiply(comppos,wf))/(np.sum(wf))
+            meants=np.sum(np.multiply(compts,wf))/(np.sum(wf))
+            meantau=np.sum(np.multiply(comptau,wf))/(np.sum(wf))
 
-        #take these weighted values and input them as a tuple into a dictionary which collates all the components
-        mean_order_values[f'{comp}']=(meanwidth,meanpos,meants,meantau)
-        print(f'Mean Ts = {meants}')
+            #take these weighted values and input them as a tuple into a dictionary which collates all the components
+            mean_order_values[f'frac {frac} cold {comp}']=(meanwidth,meanpos,meants,meantau)
+            print(f'Mean Ts = {meants}')
 
-    meancomps=tuple((mean_order_values[f'{i}'][0],
-                     mean_order_values[f'{i}'][1], 
-                     mean_order_values[f'{i}'][2], 
-                     mean_order_values[f'{i}'][3]) 
-                    for i in mean_order_values.keys())
-    return meancomps
+        #do the warm comps
+        warmcomps=string.ascii_lowercase[:len([key for key in orderinglog[1]['permutation_1_frac_0'] if re.match(r'warm_amp', key)])]  #just counts the number of warm comps and labels them
+        for i, comp in enumerate(warmcomps): 
+            print(f'warm comp {comp}')
+            #collect the component's values from each ordering
+            compamp=[orderinglog[permutation][f'permutation_{permutation}_frac_{frac}'].valuesdict()[f'warm_amp{i}'] for permutation in range(len(orderinglog))]
+            compwidth=[orderinglog[permutation][f'permutation_{permutation}_frac_{frac}'].valuesdict()[f'warm_width{i}'] for permutation in range(len(orderinglog))]
+            comppos=[orderinglog[permutation][f'permutation_{permutation}_frac_{frac}'].valuesdict()[f'warm_pos{i}'] for permutation in range(len(orderinglog))]
+            
+            #calculate wf as the variance of the residuals, sec 3.5 HT03
+            wf=[1/(np.std(orderinglog[permutation][f'permutation_{permutation}_frac_{frac}_residuals'])**2) for permutation in range(len(orderinglog))]
+
+            #apply the weighting to the component values for each ordering
+            meanamp=np.sum(np.multiply(compamp,wf))/(np.sum(wf))
+            meanwidth=np.sum(np.multiply(compwidth,wf))/(np.sum(wf))
+            meanpos=np.sum(np.multiply(comppos,wf))/(np.sum(wf))
+
+            #take these weighted values and input them as a tuple into a dictionary which collates all the components
+            mean_order_values[f'frac {frac} warm {comp}']=(meanamp,meanwidth,meanpos)
+            print(f'Mean Tb = {meanamp}')
+
+    #wont work anymore with teh dif number of comps in warm and cold tuples
+    #meancomps=tuple((mean_order_values[f'{i}'][0],
+    #                 mean_order_values[f'{i}'][1], 
+    #                 mean_order_values[f'{i}'][2], 
+    #                 mean_order_values[f'{i}'][3]) 
+    #                for i in mean_order_values.keys())
+    return mean_order_values
 
 
 def gaussian_lmfit(amplitude,width,position,length):
