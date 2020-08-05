@@ -332,7 +332,7 @@ def lmfit_multiproc_wrapper(input):
 
             fit_params.add(f'warm_amp{i}',
             value=comp[0],
-            min=0,
+            min=0.055*5, #min set to ~5sigma based on gass bonn figure from server
             vary=True)
 
             fit_params.add(f'warm_width{i}', 
