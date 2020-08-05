@@ -201,6 +201,7 @@ vellen=600,
 vel_ax=None, 
 frac=0,
 data=None):
+
     '''First component has no opacity from other components and is physically first in the LOS. 
     Second component inputted will have the first blocking it and so on.
     Component should have format (fwhm,pos,Ts,Tau)
@@ -218,6 +219,7 @@ data=None):
     else:
         gausslen = make_vel_ax(vel0=vel0,delvel=delvel,vellen=length)
     
+    print(comps)
     #separate out the warm and cold comps to make them easier to iterate through
     coldcomps = {key:val for (key,val) in comps.items() if 'cold' in key}
     warmcomps = {key:val for (key,val) in comps.items() if 'warm' in key}
@@ -424,8 +426,6 @@ def multiproc_permutations(
     indexarray=indexarray[sampstart:sampend:samp_spacing]
     comp_permutations=comp_permutations[sampstart:sampend:samp_spacing]
 
-
-
     
     with schwimmbad.MultiPool() as pool:
         print('started multi processing')
@@ -458,6 +458,7 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0):
     mean_order_values=dict()
 
     for frac in [0,0.5,1]:
+        mean_order_values[f'frac {frac}']=dict()
         #do the cold comps
         #trace a given component through all its permutations
         for comp in string.ascii_lowercase[:len(comp_permutations[0])]:
@@ -479,7 +480,10 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0):
             meantau=np.sum(np.multiply(comptau,wf))/(np.sum(wf))
 
             #take these weighted values and input them as a tuple into a dictionary which collates all the components
-            mean_order_values[f'frac {frac} cold {comp}']=(meanwidth,meanpos,meants,meantau)
+            mean_order_values[f'frac {frac}'][f'cold_width{comp}']=meanwidth
+            mean_order_values[f'frac {frac}'][f'cold_pos{comp}']=meanpos
+            mean_order_values[f'frac {frac}'][f'cold_Ts{comp}']=meants
+            mean_order_values[f'frac {frac}'][f'cold_tau{comp}']=meantau
             print(f'Mean Ts = {meants}')
 
         #do the warm comps
@@ -500,7 +504,9 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0):
             meanpos=np.sum(np.multiply(comppos,wf))/(np.sum(wf))
 
             #take these weighted values and input them as a tuple into a dictionary which collates all the components
-            mean_order_values[f'frac {frac} warm {comp}']=(meanamp,meanwidth,meanpos)
+            mean_order_values[f'frac {frac}'][f'warm_amp{comp}']=meanamp
+            mean_order_values[f'frac {frac}'][f'warm_width{comp}']=meanwidth
+            mean_order_values[f'frac {frac}'][f'warm_pos{comp}']=meanpos
             print(f'Mean Tb = {meanamp}')
 
     #wont work anymore with teh dif number of comps in warm and cold tuples
