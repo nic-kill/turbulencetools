@@ -192,7 +192,6 @@ def simulate_spec_lmfit(*comps,length,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.
     return spectrum-data
 
 def simulate_spec_kcomp_lmfit(comps,
-length,
 tb_noise=0, 
 tau_noise=0,
 vel0=-30,
@@ -219,7 +218,7 @@ processoutputs=False):
     if vel_ax is not None:
         gausslen = vel_ax
     else:
-        gausslen = make_vel_ax(vel0=vel0,delvel=delvel,vellen=length)
+        gausslen = make_vel_ax(vel0=vel0,delvel=delvel,vellen=vellen)
     
  
     #separate out the warm and cold comps to make them easier to iterate through
@@ -304,9 +303,6 @@ def lmfit_multiproc_wrapper(input):
     #maybe not needed since we feed the input spec in its original form when we specify kcomps are being assessed
     input_spec_less_kcomps=input_spec-(sumgaussians(velocityspace,*warmcomps))
 
-    #throwaway params that do nothing atm because i suck at coding and don't want to break things
-    x=10
-
     for frac in [0,0.5,1]:
 
         fit_params = Parameters()
@@ -367,11 +363,11 @@ def lmfit_multiproc_wrapper(input):
             fit_params, 
             method='leastsq', 
             args=(x,), 
-            kws={'data': input_spec, 'vel_ax': velocityspace,'length': x,'frac':frac}
+            kws={'data': input_spec, 'vel_ax': velocityspace,'frac':frac}
             )
         #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
 
-        fit = simulate_spec_kcomp_lmfit(out.params, length=x, vel_ax=velocityspace)[0]
+        fit = simulate_spec_kcomp_lmfit(out.params, vel_ax=velocityspace)[0]
         
         #write the outputs and residuals to a dictionary for each permutation calculation
 
