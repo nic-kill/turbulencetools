@@ -191,7 +191,7 @@ def simulate_spec_lmfit(*comps,length,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.
         return spectrum, spectrum_no_opac, comp1len, sumtaus, inputcomps
     return spectrum-data
 
-def simulate_spec_kcomp_lmfit(*comps,
+def simulate_spec_kcomp_lmfit(comps,
 length,
 tb_noise=0, 
 tau_noise=0,
@@ -200,18 +200,20 @@ delvel=0.5,
 vellen=600,
 vel_ax=None, 
 frac=0,
-data=None):
+data=None,
+processoutputs=False):
 
     '''First component has no opacity from other components and is physically first in the LOS. 
     Second component inputted will have the first blocking it and so on.
-    Component should have format (fwhm,pos,Ts,Tau)
+    comps is a dictionary
     Noise is in std devs and hence in the units of the spectrum
     '''
 
+    print(comps)
     #record the input components
     inputcomps=[i for i in comps]
 
-    comps=comps[0]
+    #comps=comps[0]
     
     #establish the velocity space
     if vel_ax is not None:
@@ -219,11 +221,18 @@ data=None):
     else:
         gausslen = make_vel_ax(vel0=vel0,delvel=delvel,vellen=length)
     
-    print(comps)
+ 
     #separate out the warm and cold comps to make them easier to iterate through
     coldcomps = {key:val for (key,val) in comps.items() if 'cold' in key}
     warmcomps = {key:val for (key,val) in comps.items() if 'warm' in key}
     
+    print(coldcomps)
+    #replace the letter with numbers to make processing more straightforward 
+    #if processoutputs=True:
+    #    coldcomps = {key:val for (key,val) in coldcomps.items()}
+    #    warmcomps = {key:val for (key,val) in warmcomps.items()}
+
+
     #################################
     ##first deal with the cold comps
     #################################
@@ -358,7 +367,7 @@ def lmfit_multiproc_wrapper(input):
             fit_params, 
             method='leastsq', 
             args=(x,), 
-            kws={'data': input_spec_less_kcomps, 'vel_ax': velocityspace,'length': x,'frac':frac}
+            kws={'data': input_spec, 'vel_ax': velocityspace,'length': x,'frac':frac}
             )
         #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
 
@@ -458,10 +467,11 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0):
     mean_order_values=dict()
 
     for frac in [0,0.5,1]:
+        print(f'frac {frac}')
         mean_order_values[f'frac {frac}']=dict()
         #do the cold comps
         #trace a given component through all its permutations
-        for comp in string.ascii_lowercase[:len(comp_permutations[0])]:
+        for i, comp in enumerate(string.ascii_lowercase[:len(comp_permutations[0])]):
             print(f'cold comp {comp}')
             comp_of_interest=np.argwhere(indexarray==comp)
             #collect the component's values from each ordering
@@ -480,10 +490,10 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0):
             meantau=np.sum(np.multiply(comptau,wf))/(np.sum(wf))
 
             #take these weighted values and input them as a tuple into a dictionary which collates all the components
-            mean_order_values[f'frac {frac}'][f'cold_width{comp}']=meanwidth
-            mean_order_values[f'frac {frac}'][f'cold_pos{comp}']=meanpos
-            mean_order_values[f'frac {frac}'][f'cold_Ts{comp}']=meants
-            mean_order_values[f'frac {frac}'][f'cold_tau{comp}']=meantau
+            mean_order_values[f'frac {frac}'][f'cold_width{i}']=meanwidth
+            mean_order_values[f'frac {frac}'][f'cold_pos{i}']=meanpos
+            mean_order_values[f'frac {frac}'][f'cold_Ts{i}']=meants
+            mean_order_values[f'frac {frac}'][f'cold_tau{i}']=meantau
             print(f'Mean Ts = {meants}')
 
         #do the warm comps
@@ -504,9 +514,9 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0):
             meanpos=np.sum(np.multiply(comppos,wf))/(np.sum(wf))
 
             #take these weighted values and input them as a tuple into a dictionary which collates all the components
-            mean_order_values[f'frac {frac}'][f'warm_amp{comp}']=meanamp
-            mean_order_values[f'frac {frac}'][f'warm_width{comp}']=meanwidth
-            mean_order_values[f'frac {frac}'][f'warm_pos{comp}']=meanpos
+            mean_order_values[f'frac {frac}'][f'warm_amp{i}']=meanamp
+            mean_order_values[f'frac {frac}'][f'warm_width{i}']=meanwidth
+            mean_order_values[f'frac {frac}'][f'warm_pos{i}']=meanpos
             print(f'Mean Tb = {meanamp}')
 
     #wont work anymore with teh dif number of comps in warm and cold tuples
