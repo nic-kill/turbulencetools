@@ -208,7 +208,7 @@ processoutputs=False):
     Noise is in std devs and hence in the units of the spectrum
     '''
 
-    print(comps)
+    
     #record the input components
     inputcomps=[i for i in comps]
 
@@ -225,12 +225,7 @@ processoutputs=False):
     coldcomps = {key:val for (key,val) in comps.items() if 'cold' in key}
     warmcomps = {key:val for (key,val) in comps.items() if 'warm' in key}
     
-    print(coldcomps)
-    #replace the letter with numbers to make processing more straightforward 
-    #if processoutputs=True:
-    #    coldcomps = {key:val for (key,val) in coldcomps.items()}
-    #    warmcomps = {key:val for (key,val) in warmcomps.items()}
-
+ 
 
     #################################
     ##first deal with the cold comps
@@ -272,7 +267,7 @@ processoutputs=False):
     if len(warmcomps.keys()) > 0:
         for i in range(0,int(len(warmcomps)/3)): #warm comps are specified by (amp,width,pos) hence divide by 3
             spectrum+=(frac+((1-frac)*np.exp(-sumtaus)))*gaussian(gausslen,warmcomps[f'warm_amp{i}'],warmcomps[f'warm_width{i}'],warmcomps[f'warm_pos{i}'])
-
+            spectrum_no_opac+=gaussian(gausslen,warmcomps[f'warm_amp{i}'],warmcomps[f'warm_width{i}'],warmcomps[f'warm_pos{i}'])
 
     #add in tb_noise
     noise = np.random.normal(0,tb_noise,len(comp1len))
@@ -362,7 +357,6 @@ def lmfit_multiproc_wrapper(input):
             simulate_spec_kcomp_lmfit, 
             fit_params, 
             method='leastsq', 
-            args=(x,), 
             kws={'data': input_spec, 'vel_ax': velocityspace,'frac':frac}
             )
         #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
