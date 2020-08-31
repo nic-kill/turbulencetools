@@ -9,10 +9,10 @@ from spectral_cube import SpectralCube
 
 def grid_cube(input_cube,splitfactor,save_loc,lowcut='min',highcut='max',overwrite=True):
 	'''Parameters
-	input_cube=path to file
+	input_cube=path to file inc. ".fits" at end
 	splitfactor=number of subcubes per axis
 	
-	#save_loc=path to file
+	#save_loc=path to file (splitfactor,region outlines and grid coordinates are automatically appended)
 	#specify source cube location
 	'''
 
