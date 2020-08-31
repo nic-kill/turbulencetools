@@ -21,6 +21,7 @@ from lmfit.printfuncs import report_fit
 import string
 from itertools import permutations 
 import re
+import sys
 
 
 
@@ -192,15 +193,15 @@ def simulate_spec_lmfit(*comps,length,tb_noise=0, tau_noise=0,vel0=-30,delvel=0.
     return spectrum-data
 
 def simulate_spec_kcomp_lmfit(comps,
-tb_noise=0, 
-tau_noise=0,
-vel0=-30,
-delvel=0.5,
-vellen=600,
-vel_ax=None, 
-frac=0,
-data=None,
-processoutputs=False):
+    tb_noise=0, 
+    tau_noise=0,
+    vel0=-30,
+    delvel=0.5,
+    vellen=600,
+    vel_ax=None, 
+    frac=0,
+    data=None,
+    processoutputs=False):
 
     '''First component has no opacity from other components and is physically first in the LOS. 
     Second component inputted will have the first blocking it and so on.
@@ -383,7 +384,8 @@ def multiproc_permutations(
     output_loc,
     sampstart=None,
     samp_spacing=1,
-    sampend=None):
+    sampend=None,
+    pool=schwimmbad.MultiPool()):
 
     """
     velocityspace - array 
@@ -425,10 +427,14 @@ def multiproc_permutations(
     indexarray=indexarray[sampstart:sampend:samp_spacing]
     comp_permutations=comp_permutations[sampstart:sampend:samp_spacing]
 
-    
-    with schwimmbad.MultiPool() as pool:
-        print('started multi processing')
+    with specified_pool as pool:
+        print(f'started processing with {specified_pool}')
         print(datetime.datetime.now())
+
+        if pool is schwimmbad.MPIPool():
+            if not pool.is_master():
+                pool.wait()
+                sys.exit(0)
 
         #create the lists for multiprocessing
         comp_ordering=comp_permutations
@@ -441,10 +447,10 @@ def multiproc_permutations(
         #print(f'THESE ARE THE INPUTS FOR MULTIPROCESSING:{inputs}')
 
         out = list(pool.map(lmfit_multiproc_wrapper, inputs))
-        print('finished multiprocessing')
+        print(f'finished processing with {specified_pool}')
         print(datetime.datetime.now())
-        
-    #print(out)
+
+
     pickle.dump(out, open(f'{output_loc}.pickle', 'wb'))
     pickle.dump(indexarray, open(f'{output_loc}_indexarray.pickle', 'wb'))
     pickle.dump(comp_permutations, open(f'{output_loc}_comp_permutations.pickle', 'wb'))
