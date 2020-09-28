@@ -322,7 +322,7 @@ def lmfit_multiproc_wrapper(input):
             fit_params.add(f'cold_Ts{i}',
             value=comp_ordering[i][2],
             min=0, #Ts must be positive
-            max=21.866 * (fit_params[f'cold_width{i}'].value)**2
+            max=21.866 * (fit_params[f'cold_width{i}'].value)**2,
             vary=True)
 
             fit_params.add(f'cold_tau{i}',
