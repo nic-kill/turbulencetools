@@ -1,7 +1,7 @@
 import os, glob, time
 import numpy as np
 import pickle
-from tqdm import tqdm_notebook as tqdm
+#from tqdm import tqdm_notebook as tqdm
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from scipy.interpolate import interp1d
@@ -322,6 +322,7 @@ def lmfit_multiproc_wrapper(input):
             fit_params.add(f'cold_Ts{i}',
             value=comp_ordering[i][2],
             min=0, #Ts must be positive
+            max=21.866 * (fit_params[f'cold_width{i}'].value)**2
             vary=True)
 
             fit_params.add(f'cold_tau{i}',
@@ -333,7 +334,8 @@ def lmfit_multiproc_wrapper(input):
 
             fit_params.add(f'warm_amp{i}',
             value=comp[0],
-            min=0.055*5, #min set to ~5sigma based on gass bonn figure from server
+            min=0.055*3, #min set to ~3 sigma based on gass bonn figure from server
+            max=100,#should be 10000K?
             vary=True)
 
             fit_params.add(f'warm_width{i}', 
@@ -385,7 +387,7 @@ def multiproc_permutations(
     sampstart=None,
     samp_spacing=1,
     sampend=None,
-    pool=schwimmbad.MultiPool()):
+    specified_pool=schwimmbad.MultiPool()):
 
     """
     velocityspace - array 
@@ -431,10 +433,11 @@ def multiproc_permutations(
         print(f'started processing with {specified_pool}')
         print(datetime.datetime.now())
 
-        if pool is schwimmbad.MPIPool():
-            if not pool.is_master():
-                pool.wait()
-                sys.exit(0)
+        #not working currently in a rush, not sure why it doesn't work, gets called even when multipool is specified
+        #if pool is schwimmbad.MPIPool():
+        #    if not pool.is_master():
+        #        pool.wait()
+        #        sys.exit(0)
 
         #create the lists for multiprocessing
         comp_ordering=comp_permutations
@@ -455,7 +458,8 @@ def multiproc_permutations(
     pickle.dump(indexarray, open(f'{output_loc}_indexarray.pickle', 'wb'))
     pickle.dump(comp_permutations, open(f'{output_loc}_comp_permutations.pickle', 'wb'))
 
-    print(time.time()-t_0)
+    print(f'execution time = {time.time()-t_0}')
+    print(f'execution time per permutation = {(time.time()-t_0)/(len(comp_permutations))}')
 
 def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0):
     '''returns the cold comp (FWHM,pos,Ts,tau) with weighting from HT03 applied based 
@@ -515,6 +519,7 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0):
             mean_order_values[f'frac {frac}'][f'warm_pos{i}']=meanpos
             print(f'Mean Tb = {meanamp}')
 
+    print('DONE')
     #wont work anymore with teh dif number of comps in warm and cold tuples
     #meancomps=tuple((mean_order_values[f'{i}'][0],
     #                 mean_order_values[f'{i}'][1], 
