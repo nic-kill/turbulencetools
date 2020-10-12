@@ -7,7 +7,7 @@ import matplotlib.gridspec as gridspec
 from scipy.interpolate import interp1d
 from astropy.io import fits
 import gausspy.gausspy.gp as gp
-from gausspyplus.utils.gaussian_functions import gaussian, combined_gaussian
+#from gausspyplus.utils.gaussian_functions import gaussian, combined_gaussian
 from astropy.io import fits
 import astropy.units as u
 from spectral_cube import SpectralCube
@@ -267,8 +267,14 @@ def simulate_spec_kcomp_lmfit(comps,
     #only proceed if warm components are specified
     if len(warmcomps.keys()) > 0:
         for i in range(0,int(len(warmcomps)/3)): #warm comps are specified by (amp,width,pos) hence divide by 3
-            spectrum+=(frac+((1-frac)*np.exp(-sumtaus)))*gaussian(gausslen,warmcomps[f'warm_amp{i}'],warmcomps[f'warm_width{i}'],warmcomps[f'warm_pos{i}'])
-            spectrum_no_opac+=gaussian(gausslen,warmcomps[f'warm_amp{i}'],warmcomps[f'warm_width{i}'],warmcomps[f'warm_pos{i}'])
+            spectrum+=(frac+((1-frac)*np.exp(-sumtaus)))*gaussian(gausslen,
+                warmcomps[f'warm_amp{i}'],
+                warmcomps[f'warm_width{i}'],
+                warmcomps[f'warm_pos{i}'])
+            spectrum_no_opac+=gaussian(gausslen,
+            warmcomps[f'warm_amp{i}'],
+            warmcomps[f'warm_width{i}'],
+            warmcomps[f'warm_pos{i}'])
 
     #add in tb_noise
     noise = np.random.normal(0,tb_noise,len(comp1len))
@@ -322,7 +328,8 @@ def lmfit_multiproc_wrapper(input):
             fit_params.add(f'cold_Ts{i}',
             value=comp_ordering[i][2],
             min=0, #Ts must be positive
-            max=21.866 * (fit_params[f'cold_width{i}'].value)**2,
+            max=21.866 * (comp_ordering[i][0]+0.1*np.abs(comp_ordering[i][0]))**2,
+            #max=21.866 * (fit_params[f'cold_width{i}'].value)**2, doesn't seem to work efficiently gets stuck in a loop i guess and doesn't compute or fail
             vary=True)
 
             fit_params.add(f'cold_tau{i}',
@@ -364,7 +371,7 @@ def lmfit_multiproc_wrapper(input):
             )
         #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
 
-        fit = simulate_spec_kcomp_lmfit(out.params, vel_ax=velocityspace)[0]
+        fit = simulate_spec_kcomp_lmfit(out.params, vel_ax=velocityspace, frac=frac)[0]
         
         #write the outputs and residuals to a dictionary for each permutation calculation
 
