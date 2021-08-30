@@ -243,21 +243,27 @@ def simulate_spec_kcomp_lmfit(comps,
     sumtaus=0
     
     for i in range(1,int(len(coldcomps)/4)): #divide 4 because each of the components has 4 subcomponents
-        #take the ith component beginning with the second comp
+        #take the ith component beginning with the second comp since first is unabsorbed
         newcomp, newcomplen = simulate_comp(coldcomps[f'cold_width{i}'],
         coldcomps[f'cold_pos{i}'],
         ts_0=coldcomps[f'cold_Ts{i}'],
         tau_0=coldcomps[f'cold_tau{i}'],vel_ax=vel_ax)
 
         #add to the opacity spectrum the i-1th component
-        sumtaus+=gaussian(gausslen,coldcomps[f'cold_tau{i-1}'],coldcomps[f'cold_width{i-1}'],coldcomps[f'cold_pos{i-1}'])
+        sumtaus+=gaussian(gausslen,
+        coldcomps[f'cold_tau{i-1}'],
+        coldcomps[f'cold_width{i-1}'],
+        coldcomps[f'cold_pos{i-1}'])
         
         #new spectrum = the new component * np.exp(-opacity spectrum for the preceding components)
         spectrum+=newcomp*np.exp(-sumtaus)
         spectrum_no_opac+=newcomp
     
     #add in the last component's opacity to make the opacity spectrum complete, also add in noise
-    sumtaus += gaussian(gausslen,coldcomps[f'cold_tau{int(len(coldcomps)/4)-1}'],coldcomps[f'cold_width{int(len(coldcomps)/4-1)}'],coldcomps[f'cold_pos{int(len(coldcomps)/4)-1}'])
+    sumtaus += gaussian(gausslen,
+    coldcomps[f'cold_tau{int(len(coldcomps)/4)-1}'],
+    coldcomps[f'cold_width{int(len(coldcomps)/4-1)}'],
+    coldcomps[f'cold_pos{int(len(coldcomps)/4)-1}'])
     sumtaus += (np.random.normal(0,tau_noise,len(gausslen)))
     
     #################################
@@ -289,7 +295,7 @@ def simulate_spec_kcomp_lmfit(comps,
 
 ########################
 def lmfit_multiproc_wrapper(input):
-    '''processes one of the permutations on one processor'''
+    '''processes one of the permutations on one processor. calls simulate_spec_kcomp_lmfit'''
 
     #split inputs into the components
     comp_ordering, process_no, warmcomps, input_spec, velocityspace = input
@@ -313,55 +319,52 @@ def lmfit_multiproc_wrapper(input):
         #parameterise the cold comps output from the ordering solution
         for i, comp in enumerate(comp_ordering):
 
-            fit_params.add(f'cold_width{i}',
+            fit_params.add(f'cold_width{i}', #width is pm10% on the input
             value=comp_ordering[i][0],
             min=comp_ordering[i][0]-0.1*np.abs(comp_ordering[i][0]),
             max=comp_ordering[i][0]+0.1*np.abs(comp_ordering[i][0]),
             vary=True)
 
-            fit_params.add(f'cold_pos{i}',
+            fit_params.add(f'cold_pos{i}', #pos is pm10% on the input
             value=comp_ordering[i][1],
             min=comp_ordering[i][1]-0.1*np.abs(comp_ordering[i][1]),
             max=comp_ordering[i][1]+0.1*np.abs(comp_ordering[i][1]),
             vary=True)
 
-            fit_params.add(f'cold_Ts{i}',
+            fit_params.add(f'cold_Ts{i}', #Ts must be posiitve and no higher than the max kinetic temperature defined by the FWHM
             value=comp_ordering[i][2],
             min=0, #Ts must be positive
             max=21.866 * (comp_ordering[i][0]+0.1*np.abs(comp_ordering[i][0]))**2,
             #max=21.866 * (fit_params[f'cold_width{i}'].value)**2, doesn't seem to work efficiently gets stuck in a loop i guess and doesn't compute or fail
             vary=True)
 
-            fit_params.add(f'cold_tau{i}',
+            fit_params.add(f'cold_tau{i}', #tau is invariant
             value=comp_ordering[i][3], 
             vary=False)
 
         ##parameterise the warm comps
         for i, comp in enumerate(warmcomps):
 
-            fit_params.add(f'warm_amp{i}',
+            fit_params.add(f'warm_amp{i}', #tb must be detectable at 3sigma and can't be higher than the ~30K tb peak so we restrict to less than 100K
             value=comp[0],
             min=0.055*3, #min set to ~3 sigma based on gass bonn figure from server
-            max=100,#should be 10000K?
+            max=100,#should be 10000K? implemented 100K to keep weird spikes from appearing as we shouldn't expect comps higher than the max of the spectrum
             vary=True)
 
-            fit_params.add(f'warm_width{i}', 
+            fit_params.add(f'warm_width{i}', #width is pm10% on the input
             value=comp[1],
             min=comp[1]-0.1*np.abs(comp[1]),
             max=comp[1]+0.1*np.abs(comp[1]),
             vary=True)
 
-            fit_params.add(f'warm_pos{i}',
+            fit_params.add(f'warm_pos{i}', #pos is pm10% on the input
             value=comp[2],
             min=comp[2]-0.1*np.abs(comp[2]),
             max=comp[2]+0.1*np.abs(comp[2]),
             vary=True)
         
 
-        '''feed in the above paramaters into the simulate_spec function, 
-        length is fed in as a kwarg ratherc than arg because lmfit (specifically the args=(x,)) 
-        means i need to make the length the last parameter but for a gathered parameter *comps
-        it is ambiguous as to which variable is the length'''
+        '''feed in the above paramaters into the simulate_spec function'''
 
         out = minimize(
             simulate_spec_kcomp_lmfit, 
@@ -369,8 +372,9 @@ def lmfit_multiproc_wrapper(input):
             method='leastsq', 
             kws={'data': input_spec, 'vel_ax': velocityspace,'frac':frac}
             )
-        #again need to put in length as a kwarg here. take only the first element since that's all we care about here (opacity ordered Tb)
 
+        #take only the first element since that's all we care about here (opacity ordered Tb)
+        #VERIFY  WHETHER FRAC=FRAC OR FRAC=1 is appropriate
         fit = simulate_spec_kcomp_lmfit(out.params, vel_ax=velocityspace, frac=frac)[0]
         
         #write the outputs and residuals to a dictionary for each permutation calculation
@@ -468,7 +472,7 @@ def multiproc_permutations(
     print(f'execution time = {time.time()-t_0}')
     print(f'execution time per permutation = {(time.time()-t_0)/(len(comp_permutations))}')
 
-def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0):
+def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0,return_all=False):
     '''returns the cold comp (FWHM,pos,Ts,tau) with weighting from HT03 applied based 
     on all permutations of the comp ordering given'''
     mean_order_values=dict()
@@ -503,6 +507,12 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0):
             mean_order_values[f'frac {frac}'][f'cold_tau{i}']=meantau
             print(f'Mean Ts = {meants}')
 
+            if return_all==True:
+                mean_order_values[f'frac {frac}'][f'cold_width{i}']=compwidth
+                mean_order_values[f'frac {frac}'][f'cold_pos{i}']=comppos
+                mean_order_values[f'frac {frac}'][f'cold_Ts{i}']=compts
+                mean_order_values[f'frac {frac}'][f'cold_tau{i}']=comptau
+
         #do the warm comps
         warmcomps=string.ascii_lowercase[:len([key for key in orderinglog[1]['permutation_1_frac_0'] if re.match(r'warm_amp', key)])]  #just counts the number of warm comps and labels them
         for i, comp in enumerate(warmcomps): 
@@ -526,6 +536,11 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0):
             mean_order_values[f'frac {frac}'][f'warm_pos{i}']=meanpos
             print(f'Mean Tb = {meanamp}')
 
+            if return_all==True:
+                mean_order_values[f'frac {frac}'][f'warm_amp{i}']=compamp
+                mean_order_values[f'frac {frac}'][f'warm_width{i}']=compwidth
+                mean_order_values[f'frac {frac}'][f'warm_pos{i}']=comppos
+  
     print('DONE')
     #wont work anymore with teh dif number of comps in warm and cold tuples
     #meancomps=tuple((mean_order_values[f'{i}'][0],
@@ -533,6 +548,7 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0):
     #                 mean_order_values[f'{i}'][2], 
     #                 mean_order_values[f'{i}'][3]) 
     #                for i in mean_order_values.keys())
+
     return mean_order_values
 
 
