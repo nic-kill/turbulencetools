@@ -201,6 +201,8 @@ def simulate_spec_kcomp_lmfit(comps,
     vel_ax=None, 
     frac=0,
     data=None,
+    n_cold=None,
+    n_warm=None,
     processoutputs=False):
 
     '''First component has no opacity from other components and is physically first in the LOS. 
@@ -226,7 +228,11 @@ def simulate_spec_kcomp_lmfit(comps,
     coldcomps = {key:val for (key,val) in comps.items() if 'cold' in key}
     warmcomps = {key:val for (key,val) in comps.items() if 'warm' in key}
     
- 
+    if n_cold or n_warm is None:
+        #assumes each cold comp has ts,delta,width,pos,tau
+        n_cold=int(len(coldcomps)/5)
+        #assumes each warm comp has  amp,delta,width,pos
+        n_warm=int(len(warmcomps)/4)
 
     #################################
     ##first deal with the cold comps
@@ -242,7 +248,11 @@ def simulate_spec_kcomp_lmfit(comps,
     #set the opacity of the LOS to zero
     sumtaus=0
     
-    for i in range(1,int(len(coldcomps)/4)): #divide 4 because each of the components has 4 subcomponents
+    #checks if i made a mistake in simplifying iterables
+    if n_cold != int(len(coldcomps)/5):
+        raise Exception("n_cold not implemented right")
+
+    for i in range(1,n_cold): #divide 4 because each of the components has 4 subcomponents
         #take the ith component beginning with the second comp since first is unabsorbed
         newcomp, newcomplen = simulate_comp(coldcomps[f'cold_width{i}'],
         coldcomps[f'cold_pos{i}'],
@@ -259,20 +269,26 @@ def simulate_spec_kcomp_lmfit(comps,
         spectrum+=newcomp*np.exp(-sumtaus)
         spectrum_no_opac+=newcomp
     
+    #checks if i made a mistake in simplifying iterables
+    if n_cold != int(len(coldcomps)/5):
+        raise Exception("n_cold not implemented right")
     #add in the last component's opacity to make the opacity spectrum complete, also add in noise
     sumtaus += gaussian(gausslen,
-    coldcomps[f'cold_tau{int(len(coldcomps)/4)-1}'],
-    coldcomps[f'cold_width{int(len(coldcomps)/4-1)}'],
-    coldcomps[f'cold_pos{int(len(coldcomps)/4)-1}'])
+    coldcomps[f'cold_tau{n_cold-1}'],
+    coldcomps[f'cold_width{n_cold-1}'],
+    coldcomps[f'cold_pos{n_cold-1}'])
     sumtaus += (np.random.normal(0,tau_noise,len(gausslen)))
     
     #################################
     ##now deal with the warm comps
     #################################
 
+    #checks if i made a mistake in simplifying iterables
+    if n_warm != int(len(warmcomps)/4):
+        raise Exception("n_warm not implemented right")
     #only proceed if warm components are specified
     if len(warmcomps.keys()) > 0:
-        for i in range(0,int(len(warmcomps)/3)): #warm comps are specified by (amp,width,pos) hence divide by 3
+        for i in range(0,n_warm): #warm comps are specified by (amp,width,pos) hence divide by 3
             spectrum+=(frac+((1-frac)*np.exp(-sumtaus)))*gaussian(gausslen,
                 warmcomps[f'warm_amp{i}'],
                 warmcomps[f'warm_width{i}'],
@@ -298,7 +314,7 @@ def lmfit_multiproc_wrapper(input):
     '''processes one of the permutations on one processor. calls simulate_spec_kcomp_lmfit'''
 
     #split inputs into the components
-    comp_ordering, process_no, warmcomps, input_spec, velocityspace = input
+    comp_permutations, process_no, warmcomps, input_spec, velocityspace = input
     
     print(f'Starting {process_no}')	
 
@@ -311,57 +327,101 @@ def lmfit_multiproc_wrapper(input):
     #maybe not needed since we feed the input spec in its original form when we specify kcomps are being assessed
     input_spec_less_kcomps=input_spec-(sumgaussians(velocityspace,*warmcomps))
 
+    #IF CHANGING ANY OF THESE CHANGE IN AGD_DECOMPOSER.py TOO, THEY'RE HARDCODED
+    min_ts=15 #below this temp atomic H is unlikely to exist
+    sigma_level_tau=3 #3 sigma min
+    sigma_tau=0.0005897952 #0.0005897952 is the measured tau noise
+    sigma_level_tb=3 #3 sigma min
+    sigma_tb=0.055 #0.055mK is the estimate of the Tb noise from the GASS bonn server,
+    d_mean=1
+    min_dv=4.0
+    p_width=0.1
+
     for frac in [0,0.5,1]:
 
         fit_params = Parameters()
-        print(comp_ordering)
+        print(comp_permutations)
 
         #parameterise the cold comps output from the ordering solution
-        for i, comp in enumerate(comp_ordering):
-
-            fit_params.add(f'cold_width{i}', #width is pm10% on the input
-            value=comp_ordering[i][0],
-            min=comp_ordering[i][0]-0.1*np.abs(comp_ordering[i][0]),
-            max=comp_ordering[i][0]+0.1*np.abs(comp_ordering[i][0]),
-            vary=True)
-
-            fit_params.add(f'cold_pos{i}', #pos is pm10% on the input
-            value=comp_ordering[i][1],
-            min=comp_ordering[i][1]-0.1*np.abs(comp_ordering[i][1]),
-            max=comp_ordering[i][1]+0.1*np.abs(comp_ordering[i][1]),
-            vary=True)
+        for i, comp in enumerate(comp_permutations):
 
             fit_params.add(f'cold_Ts{i}', #Ts must be posiitve and no higher than the max kinetic temperature defined by the FWHM
-            value=comp_ordering[i][2],
-            min=0, #Ts must be positive
-            max=21.866 * (comp_ordering[i][0]+0.1*np.abs(comp_ordering[i][0]))**2,
+            value=comp[2],
+            min=min_ts, #Ts must be positive
+            max=21.866 * (comp[0])**2,
             #max=21.866 * (fit_params[f'cold_width{i}'].value)**2, doesn't seem to work efficiently gets stuck in a loop i guess and doesn't compute or fail
             vary=True)
 
+            fit_params.add(f'cold_delta{i}', 
+            value=(comp[2]/(comp[0]**2)), #calculates what delta would have been given the amp and width
+            min=0,
+            max=21.866,
+            vary=True)
+            
+            #width is bound by amp and delta with additional % bounds
+            #doesn't feel quite right but i think it is correct, can't really fault it mathematically
+            fit_params.add(f'cold_width{i}', 
+            expr=f'sqrt(cold_Ts{i}/cold_delta{i})',
+            min=(comp[0] - np.abs(p_width * comp[0])), 
+            max=(comp[0] + np.abs(p_width * comp[0])))
+
+            #fit_params.add(f'cold_width{i}', #width is pm10% on the input
+            #value=comp[0],
+            #min=comp[0]-0.1*np.abs(comp[0]),
+            #max=comp[0]+0.1*np.abs(comp[0]),
+            #vary=True)
+
+            fit_params.add(f'cold_pos{i}', #pos is some km/s off the input
+            value=comp[1],
+            min=comp[1]-d_mean,
+            max=comp[1]+d_mean,
+            vary=True)
+
             fit_params.add(f'cold_tau{i}', #tau is invariant
-            value=comp_ordering[i][3], 
+            value=comp[3], 
             vary=False)
+
+            #count number of comps here for ease of use in simulate_spec_kcomp_lmfit
+            cold_count=i
 
         ##parameterise the warm comps
         for i, comp in enumerate(warmcomps):
 
             fit_params.add(f'warm_amp{i}', #tb must be detectable at 3sigma and can't be higher than the ~30K tb peak so we restrict to less than 100K
             value=comp[0],
-            min=0.055*3, #min set to ~3 sigma based on gass bonn figure from server
-            max=100,#should be 10000K? implemented 100K to keep weird spikes from appearing as we shouldn't expect comps higher than the max of the spectrum
+            min=sigma_level_tb*sigma_tb, #min set to ~3 sigma based on gass bonn figure from server
+            max=(21.866
+            * np.float(comp[1]) ** 2 
+            * (1.0 - np.exp(-sigma_level_tau * sigma_tau))), #check where the emission width intitial guess comes from and keep it below 30km/s
+                        #should be 10000K? implemented 100K to keep weird spikes from appearing as we shouldn't expect comps higher than the max of the spectrum
             vary=True)
 
-            fit_params.add(f'warm_width{i}', #width is pm10% on the input
-            value=comp[1],
-            min=comp[1]-0.1*np.abs(comp[1]),
-            max=comp[1]+0.1*np.abs(comp[1]),
-            vary=True)
+            fit_params.add(f'warm_delta{i}', 
+            value=(comp[0]/(comp[1]**2)), #calculates what delta would have been given the amp and width
+            min=0,
+            max=21.866*(1-np.exp(-sigma_level_tau*sigma_tau)),
+            vary=True) #maybe select a more informed intitial value than 0.00001
 
-            fit_params.add(f'warm_pos{i}', #pos is pm10% on the input
+            #width is bound by amp and delta with additional % bounds
+            fit_params.add(f'warm_width{i}', 
+            expr=f'sqrt(warm_amp{i}/warm_delta{i})',
+            min=np.max([min_dv, comp[1] - np.abs(p_width * comp[1])]),
+            max=comp[1] + np.abs(p_width * comp[1]))
+
+            #fit_params.add(f'warm_width{i}', #width is pm10% on the input
+            #value=comp[1],
+            #min=comp[1]-0.1*np.abs(comp[1]),
+            #max=comp[1]+0.1*np.abs(comp[1]),
+            #vary=True)
+
+            fit_params.add(f'warm_pos{i}', #pos is some km/s off the input
             value=comp[2],
-            min=comp[2]-0.1*np.abs(comp[2]),
-            max=comp[2]+0.1*np.abs(comp[2]),
+            min=comp[2]-d_mean,
+            max=comp[2]+d_mean,
             vary=True)
+
+            #count number of comps here for ease of use in simulate_spec_kcomp_lmfit
+            warm_count=i
         
 
         '''feed in the above paramaters into the simulate_spec function'''
@@ -370,7 +430,7 @@ def lmfit_multiproc_wrapper(input):
             simulate_spec_kcomp_lmfit, 
             fit_params, 
             method='leastsq', 
-            kws={'data': input_spec, 'vel_ax': velocityspace,'frac':frac}
+            kws={'data': input_spec, 'vel_ax': velocityspace,'frac':frac,'n_cold':cold_count, 'n_warm':warm_count}
             )
 
         #take only the first element since that's all we care about here (opacity ordered Tb)
@@ -404,15 +464,15 @@ def multiproc_permutations(
     velocityspace - array 
 
     coldcomps - tuple of tuples containing the outputs from the gausspy initial guesses (e.g. comps_all_reconstruct) (
-    e.g. (width0,pos0,Ts0,tau0),(width1,pos1,Ts1,tau1)....)
+    e.g. ((width0,pos0,Ts0,tau0),(width1,pos1,Ts1,tau1)....)
 
     warmcomps - em_comps_no_match
 
     datatofit - 
     output_loc - 
-    sampstart - int
-    samp_spacing - int
-    sampend - int
+    sampstart - int, where to start sampling permuations from
+    samp_spacing - int, whether to sample every permutation or skip some
+    sampend - int, where to stop sampling permutations from
 
     inputcomps should be a tuple of tuples each contianing four elements 
 
@@ -451,24 +511,33 @@ def multiproc_permutations(
         #        sys.exit(0)
 
         #create the lists for multiprocessing
-        comp_ordering=comp_permutations
-        process_no=[i for i in range(len(comp_ordering))]
-        warmcomps=[warmcomps for i in range(len(comp_ordering))] #warm comps don't change so add the same values to each cold comp permutation
-        input_spec=[input_spec for i in range(len(comp_ordering))]
-        velocityspace=[velocityspace for i in range(len(comp_ordering))]
+        process_no=[i for i in range(len(comp_permutations))]
+        warmcomps=[warmcomps for i in range(len(comp_permutations))] #warm comps don't change so add the same values to each cold comp permutation
+        input_spec=[input_spec for i in range(len(comp_permutations))]
+        velocityspace=[velocityspace for i in range(len(comp_permutations))]
 
-        inputs=list(zip(comp_ordering,process_no,warmcomps,input_spec,velocityspace))
+        inputs=list(zip(comp_permutations,process_no,warmcomps,input_spec,velocityspace))
         #print(f'THESE ARE THE INPUTS FOR MULTIPROCESSING:{inputs}')
 
         out = list(pool.map(lmfit_multiproc_wrapper, inputs))
         print(f'finished processing with {specified_pool}')
         print(datetime.datetime.now())
 
-
+    #write outputs
     pickle.dump(out, open(f'{output_loc}.pickle', 'wb'))
     pickle.dump(indexarray, open(f'{output_loc}_indexarray.pickle', 'wb'))
     pickle.dump(comp_permutations, open(f'{output_loc}_comp_permutations.pickle', 'wb'))
+    pickle.dump({'velocityspace':velocityspace,
+    'coldcomps':coldcomps,
+    'warmcomps':warmcomps,
+    'input_spec':input_spec,
+    'output_loc':output_loc,
+    'sampstart':sampstart,
+    'samp_spacing':samp_spacing,
+    'sampend':sampend}, 
+    open(f'{output_loc}_allinputs.pickle', 'wb'))
 
+    #print execution time
     print(f'execution time = {time.time()-t_0}')
     print(f'execution time per permutation = {(time.time()-t_0)/(len(comp_permutations))}')
 
