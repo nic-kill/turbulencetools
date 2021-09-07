@@ -201,8 +201,6 @@ def simulate_spec_kcomp_lmfit(comps,
     vel_ax=None, 
     frac=0,
     data=None,
-    n_cold=None,
-    n_warm=None,
     processoutputs=False):
 
     '''First component has no opacity from other components and is physically first in the LOS. 
@@ -214,8 +212,6 @@ def simulate_spec_kcomp_lmfit(comps,
     
     #record the input components
     inputcomps=[i for i in comps]
-
-    #comps=comps[0]
     
     #establish the velocity space
     if vel_ax is not None:
@@ -228,11 +224,23 @@ def simulate_spec_kcomp_lmfit(comps,
     coldcomps = {key:val for (key,val) in comps.items() if 'cold' in key}
     warmcomps = {key:val for (key,val) in comps.items() if 'warm' in key}
     
-    if n_cold or n_warm is None:
-        #assumes each cold comp has ts,delta,width,pos,tau
-        n_cold=int(len(coldcomps)/5)
-        #assumes each warm comp has  amp,delta,width,pos
-        n_warm=int(len(warmcomps)/4)
+
+    
+    #assumes each cold comp has ts,delta,width,pos,tau
+    #n_cold=int(len(coldcomps)/5)
+    #reads the dictionary and counts the suffix of cold_width variables as being the component number and takes the highest and adds 1 since they're zero indexed, reasonably assumes all components have a width
+    #this avoids assuming the number of parameters each component has (e.g delta or no delta, or only two of ts,tb, tau etc) or having to manually pass throguh the count
+    n_cold=np.max([int(key[10:]) for (key,value) in coldcomps.items() if key[:10]=='cold_width'])+1 
+    #assumes each warm comp has  amp,delta,width,pos
+    #n_warm=int(len(warmcomps)/4)
+    #reads the dictionary and counts the suffix of cold_width variables as being the component number and takes the highest and adds 1 since they're zero indexed, reasonably assumes all components have a width
+    #this avoids assuming the number of parameters each component has (e.g delta or no delta, or only two of ts,tb, tau etc) or having to manually pass throguh the count
+    try:
+        n_warm=np.max([int(key[10:]) for (key,value) in warmcomps.items() if key[:10]=='warm_width'])+1
+    except ValueError as error:
+        print(error)
+        n_warm=0
+        print('warmcomps is empty, interpreting as n_warm=0')
 
     #################################
     ##first deal with the cold comps
@@ -248,11 +256,9 @@ def simulate_spec_kcomp_lmfit(comps,
     #set the opacity of the LOS to zero
     sumtaus=0
     
-    #checks if i made a mistake in simplifying iterables
-    if n_cold != int(len(coldcomps)/5):
-        raise Exception("n_cold not implemented right")
 
-    for i in range(1,n_cold): #divide 4 because each of the components has 4 subcomponents
+
+    for i in range(1,n_cold):
         #take the ith component beginning with the second comp since first is unabsorbed
         newcomp, newcomplen = simulate_comp(coldcomps[f'cold_width{i}'],
         coldcomps[f'cold_pos{i}'],
@@ -269,9 +275,7 @@ def simulate_spec_kcomp_lmfit(comps,
         spectrum+=newcomp*np.exp(-sumtaus)
         spectrum_no_opac+=newcomp
     
-    #checks if i made a mistake in simplifying iterables
-    if n_cold != int(len(coldcomps)/5):
-        raise Exception("n_cold not implemented right")
+        print(f'cold {i}')
     #add in the last component's opacity to make the opacity spectrum complete, also add in noise
     sumtaus += gaussian(gausslen,
     coldcomps[f'cold_tau{n_cold-1}'],
@@ -283,9 +287,6 @@ def simulate_spec_kcomp_lmfit(comps,
     ##now deal with the warm comps
     #################################
 
-    #checks if i made a mistake in simplifying iterables
-    if n_warm != int(len(warmcomps)/4):
-        raise Exception("n_warm not implemented right")
     #only proceed if warm components are specified
     if len(warmcomps.keys()) > 0:
         for i in range(0,n_warm): #warm comps are specified by (amp,width,pos) hence divide by 3
@@ -297,6 +298,7 @@ def simulate_spec_kcomp_lmfit(comps,
             warmcomps[f'warm_amp{i}'],
             warmcomps[f'warm_width{i}'],
             warmcomps[f'warm_pos{i}'])
+            print(f'warm {i}')
 
     #add in tb_noise
     noise = np.random.normal(0,tb_noise,len(comp1len))
@@ -348,7 +350,8 @@ def lmfit_multiproc_wrapper(input):
             fit_params.add(f'cold_Ts{i}', #Ts must be posiitve and no higher than the max kinetic temperature defined by the FWHM
             value=comp[2],
             min=min_ts, #Ts must be positive
-            max=21.866 * (comp[0])**2,
+            max=np.min([21.866 * (comp[0])**2,
+            (40/(1.0 - np.exp(-comp[3])))]),
             #max=21.866 * (fit_params[f'cold_width{i}'].value)**2, doesn't seem to work efficiently gets stuck in a loop i guess and doesn't compute or fail
             vary=True)
 
@@ -381,8 +384,7 @@ def lmfit_multiproc_wrapper(input):
             value=comp[3], 
             vary=False)
 
-            #count number of comps here for ease of use in simulate_spec_kcomp_lmfit
-            cold_count=i
+
 
         ##parameterise the warm comps
         for i, comp in enumerate(warmcomps):
@@ -390,9 +392,10 @@ def lmfit_multiproc_wrapper(input):
             fit_params.add(f'warm_amp{i}', #tb must be detectable at 3sigma and can't be higher than the ~30K tb peak so we restrict to less than 100K
             value=comp[0],
             min=sigma_level_tb*sigma_tb, #min set to ~3 sigma based on gass bonn figure from server
-            max=(21.866
+            max=np.min([(21.866
             * np.float(comp[1]) ** 2 
-            * (1.0 - np.exp(-sigma_level_tau * sigma_tau))), #check where the emission width intitial guess comes from and keep it below 30km/s
+            * (1.0 - np.exp(-sigma_level_tau * sigma_tau))),
+            40]), #check where the emission width intitial guess comes from and keep it below 30km/s
                         #should be 10000K? implemented 100K to keep weird spikes from appearing as we shouldn't expect comps higher than the max of the spectrum
             vary=True)
 
@@ -420,8 +423,6 @@ def lmfit_multiproc_wrapper(input):
             max=comp[2]+d_mean,
             vary=True)
 
-            #count number of comps here for ease of use in simulate_spec_kcomp_lmfit
-            warm_count=i
         
 
         '''feed in the above paramaters into the simulate_spec function'''
@@ -430,7 +431,7 @@ def lmfit_multiproc_wrapper(input):
             simulate_spec_kcomp_lmfit, 
             fit_params, 
             method='leastsq', 
-            kws={'data': input_spec, 'vel_ax': velocityspace,'frac':frac,'n_cold':cold_count, 'n_warm':warm_count}
+            kws={'data': input_spec, 'vel_ax': velocityspace,'frac':frac}
             )
 
         #take only the first element since that's all we care about here (opacity ordered Tb)
@@ -527,10 +528,10 @@ def multiproc_permutations(
     pickle.dump(out, open(f'{output_loc}.pickle', 'wb'))
     pickle.dump(indexarray, open(f'{output_loc}_indexarray.pickle', 'wb'))
     pickle.dump(comp_permutations, open(f'{output_loc}_comp_permutations.pickle', 'wb'))
-    pickle.dump({'velocityspace':velocityspace,
+    pickle.dump({'velocityspace':velocityspace[0],
     'coldcomps':coldcomps,
-    'warmcomps':warmcomps,
-    'input_spec':input_spec,
+    'warmcomps':warmcomps[0],
+    'input_spec':input_spec[0],
     'output_loc':output_loc,
     'sampstart':sampstart,
     'samp_spacing':samp_spacing,
