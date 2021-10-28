@@ -238,9 +238,9 @@ def simulate_spec_kcomp_lmfit(comps,
     try:
         n_warm=np.max([int(key[10:]) for (key,value) in warmcomps.items() if key[:10]=='warm_width'])+1
     except ValueError as error:
-        print(error)
+        #print(error)
         n_warm=0
-        print('warmcomps is empty, interpreting as n_warm=0')
+        #print('warmcomps is empty, interpreting as n_warm=0')
 
     #################################
     ##first deal with the cold comps
@@ -275,7 +275,7 @@ def simulate_spec_kcomp_lmfit(comps,
         spectrum+=newcomp*np.exp(-sumtaus)
         spectrum_no_opac+=newcomp
     
-        print(f'cold {i}')
+        #print(f'cold {i}')
     #add in the last component's opacity to make the opacity spectrum complete, also add in noise
     sumtaus += gaussian(gausslen,
     coldcomps[f'cold_tau{n_cold-1}'],
@@ -298,7 +298,7 @@ def simulate_spec_kcomp_lmfit(comps,
             warmcomps[f'warm_amp{i}'],
             warmcomps[f'warm_width{i}'],
             warmcomps[f'warm_pos{i}'])
-            print(f'warm {i}')
+            #print(f'warm {i}')
 
     #add in tb_noise
     noise = np.random.normal(0,tb_noise,len(comp1len))
@@ -524,10 +524,14 @@ def multiproc_permutations(
         print(f'finished processing with {specified_pool}')
         print(datetime.datetime.now())
 
+    mean_order_values=weighted_comp_vals(out,comp_permutations,indexarray)
+
     #write outputs
+    print(f'writing to: {output_loc}')
     pickle.dump(out, open(f'{output_loc}.pickle', 'wb'))
     pickle.dump(indexarray, open(f'{output_loc}_indexarray.pickle', 'wb'))
     pickle.dump(comp_permutations, open(f'{output_loc}_comp_permutations.pickle', 'wb'))
+    pickle.dump(mean_order_values, open(f'{output_loc}_weightedcomps.pickle', 'wb'))
     pickle.dump({'velocityspace':velocityspace[0],
     'coldcomps':coldcomps,
     'warmcomps':warmcomps[0],
@@ -554,28 +558,31 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0,return_al
         #trace a given component through all its permutations
         for i, comp in enumerate(string.ascii_lowercase[:len(comp_permutations[0])]):
             print(f'cold comp {comp}')
+            print(f'1 = {time.time()}')
             comp_of_interest=np.argwhere(indexarray==comp)
+            print(f'2 = {time.time()}')
             #collect the component's values from each ordering
             compwidth=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'].valuesdict()[f'cold_width{ordering[1]}'] for ordering in comp_of_interest]
             comppos=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'].valuesdict()[f'cold_pos{ordering[1]}'] for ordering in comp_of_interest]
             compts=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'].valuesdict()[f'cold_Ts{ordering[1]}'] for ordering in comp_of_interest]
             comptau=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'].valuesdict()[f'cold_tau{ordering[1]}'] for ordering in comp_of_interest]
-            
+            print(f'3 = {time.time()}')
             #calculate wf as the variance of the residuals, sec 3.5 HT03
             wf=[1/(np.std(orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}_residuals'])**2) for ordering in comp_of_interest]
-
+            print(f'4 = {time.time()}')
             #apply the weighting to the component values for each ordering
             meanwidth=np.sum(np.multiply(compwidth,wf))/(np.sum(wf))
             meanpos=np.sum(np.multiply(comppos,wf))/(np.sum(wf))
             meants=np.sum(np.multiply(compts,wf))/(np.sum(wf))
             meantau=np.sum(np.multiply(comptau,wf))/(np.sum(wf))
-
+            print(f'5 = {time.time()}')
             #take these weighted values and input them as a tuple into a dictionary which collates all the components
             mean_order_values[f'frac {frac}'][f'cold_width{i}']=meanwidth
             mean_order_values[f'frac {frac}'][f'cold_pos{i}']=meanpos
             mean_order_values[f'frac {frac}'][f'cold_Ts{i}']=meants
             mean_order_values[f'frac {frac}'][f'cold_tau{i}']=meantau
             print(f'Mean Ts = {meants}')
+            print(f'6 = {time.time()}')
 
             if return_all==True:
                 mean_order_values[f'frac {frac}'][f'cold_width{i}']=compwidth
@@ -621,13 +628,14 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0,return_al
 
     return mean_order_values
 
-
+#maybe deprecate? They seem to be unused and worse versions of the non-lmfit versions
 def gaussian_lmfit(amplitude,width,position,length):
     model=amplitude*np.exp(-0.5*((length-position)**2/(width/(2*np.sqrt(2*np.log(2))))**2))
     #if data is None:
     #    return model
     return model
 
+#maybe deprecate? They seem to be unused and worse versions of the non-lmfit versions
 def sumgaussians_lmfit(args, x, data=None): 
     y=0
     #print(args)
