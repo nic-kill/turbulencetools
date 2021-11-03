@@ -1,3 +1,5 @@
+''' "Do you think god stays in heaven because he too lives in fear of what he's created?" - Renowned programmer Steve Buscemi, Spy Kids 2001
+'''
 import os, glob, time
 import numpy as np
 import pickle
@@ -548,7 +550,9 @@ def multiproc_permutations(
 
 def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0,return_all=False):
     '''returns the cold comp (FWHM,pos,Ts,tau) with weighting from HT03 applied based 
-    on all permutations of the comp ordering given'''
+    on all permutations of the comp ordering given
+    
+    this is just awful awful code i regret writing it. i'm truly sorry.'''
     mean_order_values=dict()
 
     for frac in [0,0.5,1]:
@@ -562,10 +566,10 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0,return_al
             comp_of_interest=np.argwhere(indexarray==comp)
             print(f'2 = {time.time()}')
             #collect the component's values from each ordering
-            compwidth=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'].valuesdict()[f'cold_width{ordering[1]}'] for ordering in comp_of_interest]
-            comppos=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'].valuesdict()[f'cold_pos{ordering[1]}'] for ordering in comp_of_interest]
-            compts=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'].valuesdict()[f'cold_Ts{ordering[1]}'] for ordering in comp_of_interest]
-            comptau=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'].valuesdict()[f'cold_tau{ordering[1]}'] for ordering in comp_of_interest]
+            compwidth=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'][f'cold_width{ordering[1]}'].value for ordering in comp_of_interest]
+            comppos=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'][f'cold_pos{ordering[1]}'].value for ordering in comp_of_interest]
+            compts=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'][f'cold_Ts{ordering[1]}'].value for ordering in comp_of_interest]
+            comptau=[orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}'][f'cold_tau{ordering[1]}'].value for ordering in comp_of_interest]
             print(f'3 = {time.time()}')
             #calculate wf as the variance of the residuals, sec 3.5 HT03
             wf=[1/(np.std(orderinglog[ordering[0]][f'permutation_{ordering[0]}_frac_{frac}_residuals'])**2) for ordering in comp_of_interest]
@@ -585,19 +589,23 @@ def weighted_comp_vals(orderinglog,comp_permutations,indexarray,frac=0,return_al
             print(f'6 = {time.time()}')
 
             if return_all==True:
+                #returns the values for the component tracked across its line of sight, list is ordered by permutation e.g. 0-8!
                 mean_order_values[f'frac {frac}'][f'cold_width{i}']=compwidth
                 mean_order_values[f'frac {frac}'][f'cold_pos{i}']=comppos
                 mean_order_values[f'frac {frac}'][f'cold_Ts{i}']=compts
                 mean_order_values[f'frac {frac}'][f'cold_tau{i}']=comptau
-
+        if return_all==True:
+            for iter in np.arange(len(comp_permutations)):
+                mean_order_values[f'frac {frac}'][f'permutation_{iter}_frac_{frac}_residuals']=np.sum(np.abs(orderinglog[iter][f'permutation_{iter}_frac_{frac}_residuals']))
+                
         #do the warm comps
         warmcomps=string.ascii_lowercase[:len([key for key in orderinglog[1]['permutation_1_frac_0'] if re.match(r'warm_amp', key)])]  #just counts the number of warm comps and labels them
         for i, comp in enumerate(warmcomps): 
             print(f'warm comp {comp}')
             #collect the component's values from each ordering
-            compamp=[orderinglog[permutation][f'permutation_{permutation}_frac_{frac}'].valuesdict()[f'warm_amp{i}'] for permutation in range(len(orderinglog))]
-            compwidth=[orderinglog[permutation][f'permutation_{permutation}_frac_{frac}'].valuesdict()[f'warm_width{i}'] for permutation in range(len(orderinglog))]
-            comppos=[orderinglog[permutation][f'permutation_{permutation}_frac_{frac}'].valuesdict()[f'warm_pos{i}'] for permutation in range(len(orderinglog))]
+            compamp=[orderinglog[permutation][f'permutation_{permutation}_frac_{frac}'][f'warm_amp{i}'].value for permutation in range(len(orderinglog))]
+            compwidth=[orderinglog[permutation][f'permutation_{permutation}_frac_{frac}'][f'warm_width{i}'].value for permutation in range(len(orderinglog))]
+            comppos=[orderinglog[permutation][f'permutation_{permutation}_frac_{frac}'][f'warm_pos{i}'].value for permutation in range(len(orderinglog))]
             
             #calculate wf as the variance of the residuals, sec 3.5 HT03
             wf=[1/(np.std(orderinglog[permutation][f'permutation_{permutation}_frac_{frac}_residuals'])**2) for permutation in range(len(orderinglog))]
